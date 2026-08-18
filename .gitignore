@@ -3,25 +3,56 @@
 *.dll
 *.so
 *.dylib
-bin/
-out/
+*.a
+/bin/
+/out/
+/dist/
+
+__debug_bin*
+debug.test
+
+*.test
+*.out
+*.prof
+*.coverprofile
+/coverage/
+/coverage.html
+
+/.tmp/
+/tmp/
 
 .env
 .env.*
 !.env.example
 
-*.out
-*.prof
-*.test
-/coverage.html
+/.prodmap/*.db
+/.prodmap/*.db-*
+/.prodmap/*.sqlite
+/.prodmap/*.sqlite-*
+/.prodmap/logs/
 
-.vscode/
-!.vscode/extensions.json
 
-.idea/
+/go.work
+/go.work.sum
+
+/.vscode/*
+!/.vscode/extensions.json
+/.idea/
 
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.swp
+*.swo
+*~
+*.bak
+
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+/logs/
+*.tmp

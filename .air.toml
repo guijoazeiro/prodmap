@@ -1,0 +1,26 @@
+# Local development live reload. This is never used in production.
+root = "."
+tmp_dir = ".tmp"
+
+[build]
+cmd = "go build -o ./.tmp/prodmap ./cmd/prodmap"
+entrypoint = ["./.tmp/prodmap"]
+include_ext = ["go", "toml", "yaml", "yml"]
+include_file = ["go.mod", "go.sum"]
+exclude_dir = [".git", ".tmp", "bin", "docs", "vendor"]
+exclude_regex = ["_test\\.go"]
+exclude_unchanged = true
+delay = 200
+stop_on_error = false
+send_interrupt = true
+kill_delay = 500000000
+
+[log]
+time = true
+
+[misc]
+clean_on_exit = true
+
+[screen]
+clear_on_rebuild = false
+keep_scroll = true
