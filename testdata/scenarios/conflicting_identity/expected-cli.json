@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "command": [
+    "prodmap",
+    "explain",
+    "<correlation_id>",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": {
+    "target_type": "correlation",
+    "confidence": "UNKNOWN",
+    "score": 0,
+    "relation_type": "inferred",
+    "algorithm": "provenance/v0-experimental",
+    "warnings": [
+      "conflicting immutable image identities"
+    ],
+    "missing": [],
+    "evidence_kinds": [
+      "identity",
+      "contradiction"
+    ]
+  }
+}

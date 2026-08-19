@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "clock": "2026-08-19T12:00:00Z",
+  "repository": {
+    "external_id": "repo-fixture",
+    "name": "prodmap-fixture",
+    "canonical_url": "https://example.invalid/prodmap-fixture.git",
+    "root_path_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "runtime_batches": [
+    {
+      "arrival_sequence": 1,
+      "observations": [
+        {
+          "external_id": "ctr-exact",
+          "container_name": "api-1",
+          "image_reference": "registry.example.invalid/prodmap/api:2026-08-19",
+          "image_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "repo_digests": [
+            "registry.example.invalid/prodmap/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          ],
+          "repo_tags": [
+            "registry.example.invalid/prodmap/api:2026-08-19"
+          ],
+          "oci_labels": {
+            "org.opencontainers.image.revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "state": "running",
+          "health": "healthy",
+          "restart_count": 0,
+          "started_at": "2026-08-19T11:55:00Z",
+          "observed_at": "2026-08-19T12:00:00Z"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commit_time": "2026-08-19T11:00:00Z",
+      "subject": "fixture exact commit",
+      "tree_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}

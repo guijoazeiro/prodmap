@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "clock": "2026-08-19T12:00:00Z",
+  "service_key": "billing",
+  "runtime_records": [
+    {
+      "observed_at": "2026-08-19T12:00:00Z",
+      "preserved": true,
+      "latest": true
+    }
+  ],
+  "provenance": {
+    "relation_type": "inferred",
+    "level": "UNKNOWN",
+    "score": 0,
+    "warnings": [],
+    "missing": [
+      "OCI revision metadata"
+    ],
+    "evidence_kinds": [
+      "identity",
+      "data_quality"
+    ],
+    "commit_sha": null
+  }
+}
