@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
   "clock": "2026-08-19T12:00:00Z",
-  "environment": "fixture",
+  "environment": "default",
   "oci_label_allowlist": [
     "org.opencontainers.image.revision",
     "org.opencontainers.image.source",
-    "org.opencontainers.image.title"
+    "org.opencontainers.image.created"
   ]
 }

@@ -108,6 +108,30 @@ func TestRepositoryWithoutOriginUsesOnlyHashedLocalIdentity(t *testing.T) {
 	}
 }
 
+func TestSourceReadsCommitFromLinkedWorktree(t *testing.T) {
+	repositoryDir := newTestRepository(t)
+	sha := strings.TrimSpace(runGit(t, repositoryDir, "rev-parse", "HEAD"))
+	linkedDir := filepath.Join(t.TempDir(), "linked")
+	runGit(t, repositoryDir, "worktree", "add", "--detach", linkedDir, "HEAD")
+
+	source := New(linkedDir)
+	repository, err := source.Repository(context.Background())
+	if err != nil {
+		t.Fatalf("Repository(linked worktree) error = %v", err)
+	}
+	wantRootHash := sha256.Sum256([]byte(filepath.Clean(linkedDir)))
+	if repository.RootPathHash != hex.EncodeToString(wantRootHash[:]) {
+		t.Fatalf("linked RootPathHash = %q, want hash of worktree root", repository.RootPathHash)
+	}
+	commit, err := source.ResolveCommit(context.Background(), sha)
+	if err != nil {
+		t.Fatalf("ResolveCommit(linked worktree) error = %v", err)
+	}
+	if commit.SHA != sha {
+		t.Fatalf("ResolveCommit(linked worktree).SHA = %q, want %q", commit.SHA, sha)
+	}
+}
+
 func TestRepositoryNotFoundIsCategorized(t *testing.T) {
 	_, err := New(t.TempDir()).Repository(context.Background())
 	if !errors.Is(err, errs.ErrNotFound) {
@@ -232,10 +256,10 @@ func TestSourceAppliesCommandTimeout(t *testing.T) {
 	}
 }
 
-func TestSourceCategorizesOutputLimitAndSanitizesDiagnostic(t *testing.T) {
+func TestSourceCategorizesOutputLimitWithoutExposingDiagnostic(t *testing.T) {
 	projectDir := "/private/work/project"
 	runner := runnerFunc(func(context.Context, string, ...string) (commandResult, error) {
-		return commandResult{stderr: []byte(projectDir + "\ntoken=must-not-leak https://user:password@example.invalid/repo " + strings.Repeat("x", 800))}, errOutputLimit
+		return commandResult{stderr: []byte(projectDir + "\naccess_token=must-not-leak api_key=opaque-secret Authorization: Bearer alphanumericsecret https://user:password@example.invalid/repo")}, errOutputLimit
 	})
 
 	_, err := New(projectDir, withRunner(runner)).Repository(context.Background())
@@ -248,11 +272,33 @@ func TestSourceCategorizesOutputLimitAndSanitizesDiagnostic(t *testing.T) {
 	if strings.ContainsAny(err.Error(), "\n\r\t") {
 		t.Fatalf("Repository() diagnostic contains control whitespace: %q", err)
 	}
-	if strings.Contains(err.Error(), "must-not-leak") || strings.Contains(err.Error(), "user:password") {
+	if strings.Contains(err.Error(), "must-not-leak") || strings.Contains(err.Error(), "opaque-secret") || strings.Contains(err.Error(), "alphanumericsecret") || strings.Contains(err.Error(), "user:password") {
 		t.Fatalf("Repository() diagnostic leaks credentials: %v", err)
 	}
-	if utf8.RuneCountInString(err.Error()) > 620 {
-		t.Fatalf("Repository() diagnostic was not reasonably limited: %d runes", utf8.RuneCountInString(err.Error()))
+}
+
+func TestResolveExit128WithoutMissingObjectEvidenceIsUnavailable(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	runner := runnerFunc(func(context.Context, string, ...string) (commandResult, error) {
+		return commandResult{stderr: []byte("fatal: permission denied; Authorization: Bearer must-not-leak")}, fakeExitError{code: 128}
+	})
+	_, err := New("/project", withRunner(runner)).ResolveCommit(context.Background(), sha)
+	if !errors.Is(err, errs.ErrUnavailable) || errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("ResolveCommit(permission failure) error=%v, want only ErrUnavailable", err)
+	}
+	if strings.Contains(err.Error(), "must-not-leak") || strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("ResolveCommit() exposed Git diagnostic: %v", err)
+	}
+}
+
+func TestResolveExit128WithMissingObjectEvidenceIsNotFound(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	runner := runnerFunc(func(context.Context, string, ...string) (commandResult, error) {
+		return commandResult{stderr: []byte("fatal: Needed a single revision")}, fakeExitError{code: 128}
+	})
+	_, err := New("/project", withRunner(runner)).ResolveCommit(context.Background(), sha)
+	if !errors.Is(err, errs.ErrNotFound) || errors.Is(err, errs.ErrUnavailable) {
+		t.Fatalf("ResolveCommit(missing object) error=%v, want only ErrNotFound", err)
 	}
 }
 

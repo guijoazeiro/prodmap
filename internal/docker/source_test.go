@@ -49,6 +49,9 @@ func TestInspectRuntimeIsDeterministicAndSanitizesMetadata(t *testing.T) {
 			if strings.Contains(args[3], "json .Config.Labels") || strings.Contains(args[3], ".Config.Env") {
 				t.Fatal("image projection requested the complete label map or environment")
 			}
+			if strings.Contains(args[3], "org.opencontainers.image.version") {
+				t.Fatal("image projection requested OCI version metadata that Phase 1 does not retain")
+			}
 			switch args[len(args)-1] {
 			case imageA:
 				return []byte(`{"id":"` + imageA + `","repo_digests":["registry.example/api@sha256:bbb","registry.example/api@sha256:aaa","registry.example/api@sha256:aaa"],"repo_tags":["registry.example/api:z","registry.example/api:a"],"labels":{"org.opencontainers.image.revision":"abcdef0123456789abcdef0123456789abcdef01","org.opencontainers.image.source":"https://example.invalid/repo","com.example.secret":"must-not-leak"}}`), nil
@@ -108,6 +111,9 @@ func TestInspectRuntimeIsDeterministicAndSanitizesMetadata(t *testing.T) {
 	}
 	if batch.Observations[1].StartedAt != nil {
 		t.Fatalf("zero Docker start time = %v, want nil", batch.Observations[1].StartedAt)
+	}
+	if batch.Observations[1].Health != "none" {
+		t.Fatalf("missing Docker health = %q, want explicit none", batch.Observations[1].Health)
 	}
 }
 

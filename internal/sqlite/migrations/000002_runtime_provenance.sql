@@ -58,7 +58,15 @@ CREATE TABLE artifacts (
     ingested_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (source_id, identity_kind, identity)
+    UNIQUE (source_id, identity_kind, identity),
+    CHECK (
+        (identity_kind = 'mutable_tag' AND digest_algorithm IS NULL AND digest IS NULL)
+        OR
+        (identity_kind IN ('repo_digest', 'image_id') AND digest_algorithm IS NOT NULL AND digest IS NOT NULL AND (
+            (digest_algorithm = 'sha256' AND length(digest) = 64)
+            OR (digest_algorithm = 'sha512' AND length(digest) = 128)
+        ) AND digest NOT GLOB '*[^0-9a-f]*' AND identity = digest_algorithm || ':' || digest)
+    )
 );
 
 CREATE TABLE artifact_aliases (
@@ -66,9 +74,21 @@ CREATE TABLE artifact_aliases (
     alias TEXT NOT NULL,
     valid_from TEXT NOT NULL,
     valid_to TEXT,
-    PRIMARY KEY (artifact_id, alias, valid_from),
+    PRIMARY KEY (alias, valid_from),
     CHECK (valid_to IS NULL OR valid_to > valid_from)
 );
+
+CREATE UNIQUE INDEX artifact_aliases_current_idx ON artifact_aliases(alias) WHERE valid_to IS NULL;
+
+CREATE TABLE artifact_alias_observations (
+    alias TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (alias, observed_at)
+);
+
+CREATE INDEX artifact_alias_observations_artifact_idx ON artifact_alias_observations(artifact_id, observed_at DESC);
 
 CREATE TABLE services (
     id TEXT PRIMARY KEY,
@@ -119,13 +139,20 @@ CREATE TABLE correlations (
     score REAL NOT NULL CHECK (score >= 0 AND score <= 1),
     level TEXT NOT NULL CHECK (level IN ('EXACT', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN')),
     algorithm_version TEXT NOT NULL,
+    derivation_fingerprint TEXT NOT NULL CHECK (length(derivation_fingerprint) = 64),
+    derivation_priority INTEGER NOT NULL CHECK (derivation_priority >= 0),
+    is_current INTEGER NOT NULL CHECK (is_current IN (0, 1)),
     conclusion TEXT NOT NULL,
     missing_json TEXT NOT NULL,
     warnings_json TEXT NOT NULL,
+    score_components_json TEXT NOT NULL,
+    hard_caps_json TEXT NOT NULL,
+    resolution_attempts_json TEXT NOT NULL,
+    source_freshness_json TEXT NOT NULL,
     observed_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (runtime_id, algorithm_version)
+    UNIQUE (runtime_id, algorithm_version, derivation_fingerprint)
 );
 
 CREATE TABLE evidence (
@@ -146,4 +173,5 @@ CREATE TABLE evidence (
 
 CREATE INDEX correlations_artifact_idx ON correlations(artifact_id, observed_at DESC);
 CREATE INDEX correlations_commit_idx ON correlations(commit_id, observed_at DESC);
+CREATE UNIQUE INDEX correlations_current_idx ON correlations(runtime_id, algorithm_version) WHERE is_current = 1;
 CREATE INDEX evidence_correlation_idx ON evidence(correlation_id, polarity, strength DESC);

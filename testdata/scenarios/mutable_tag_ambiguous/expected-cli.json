@@ -3,24 +3,89 @@
   "command": [
     "prodmap",
     "explain",
-    "<correlation_id>",
+    "\u003ccorrelation_id\u003e",
+    "--detail",
+    "full",
     "--json"
   ],
   "exit_code": 0,
   "stderr": "",
   "stdout": {
-    "target_type": "correlation",
-    "confidence": "LOW",
-    "score": 0.35,
-    "relation_type": "inferred",
-    "algorithm": "provenance/v0-experimental",
-    "warnings": [],
-    "missing": [
-      "OCI revision metadata"
-    ],
-    "evidence_kinds": [
-      "identity",
-      "data_quality"
-    ]
+    "command": "explain",
+    "data": {
+      "algorithm": "provenance/v0-experimental",
+      "conclusion": "Only a mutable image alias is available; commit provenance is not established.",
+      "confidence": "LOW",
+      "contradicting_evidence": [],
+      "entities": {
+        "artifact": "\u003cuuid\u003e",
+        "runtime": "\u003cuuid\u003e"
+      },
+      "freshness": "2026-08-19T12:00:00Z",
+      "hard_caps": [
+        {
+          "max_level": "LOW",
+          "name": "mutable_artifact_identity",
+          "reason": "A mutable alias cannot establish exact artifact identity."
+        }
+      ],
+      "limitations": [
+        "This is a provenance correlation, not proof of causality."
+      ],
+      "missing": [
+        "OCI revision metadata"
+      ],
+      "neutral_evidence": [
+        {
+          "claim": "The image does not declare org.opencontainers.image.revision.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "data_quality",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "neutral",
+          "source": "docker",
+          "strength": 0,
+          "subject": "registry.example.invalid/prodmap/worker:latest"
+        }
+      ],
+      "relation_type": "inferred",
+      "resolution_attempts": [],
+      "score": 0.35,
+      "score_components": [
+        {
+          "description": "Only a mutable Docker artifact alias is available.",
+          "name": "mutable_artifact_alias",
+          "value": 0.35
+        }
+      ],
+      "source_freshness": [
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "source": "docker"
+        }
+      ],
+      "sources": [
+        "docker"
+      ],
+      "supporting_evidence": [
+        {
+          "claim": "The running container uses mutable image alias registry.example.invalid/prodmap/worker:latest.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "identity",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "supports",
+          "source": "docker",
+          "strength": 0.35,
+          "subject": "registry.example.invalid/prodmap/worker:latest"
+        }
+      ],
+      "target_id": "\u003cuuid\u003e",
+      "target_type": "correlation"
+    },
+    "generated_at": "\u003cgenerated-at\u003e",
+    "pagination": null,
+    "schema_version": "1.0",
+    "warnings": []
   }
 }

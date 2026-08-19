@@ -3,24 +3,90 @@
   "command": [
     "prodmap",
     "explain",
-    "<correlation_id>",
+    "\u003ccorrelation_id\u003e",
+    "--detail",
+    "full",
     "--json"
   ],
   "exit_code": 0,
   "stderr": "",
   "stdout": {
-    "target_type": "correlation",
-    "confidence": "UNKNOWN",
-    "score": 0,
-    "relation_type": "inferred",
-    "algorithm": "provenance/v0-experimental",
-    "warnings": [],
-    "missing": [
-      "OCI revision metadata"
-    ],
-    "evidence_kinds": [
-      "identity",
-      "data_quality"
-    ]
+    "command": "explain",
+    "data": {
+      "algorithm": "provenance/v0-experimental",
+      "conclusion": "Commit provenance is unknown because OCI revision metadata is absent.",
+      "confidence": "UNKNOWN",
+      "contradicting_evidence": [],
+      "entities": {
+        "artifact": "\u003cuuid\u003e",
+        "runtime": "\u003cuuid\u003e"
+      },
+      "freshness": "2026-08-19T12:00:00Z",
+      "hard_caps": [
+        {
+          "max_level": "UNKNOWN",
+          "name": "missing_oci_revision",
+          "reason": "Without a declared revision, an artifact cannot be linked to a commit."
+        }
+      ],
+      "limitations": [
+        "This is a provenance correlation, not proof of causality.",
+        "Required provenance data is missing or contradictory."
+      ],
+      "missing": [
+        "OCI revision metadata"
+      ],
+      "neutral_evidence": [
+        {
+          "claim": "The image does not declare org.opencontainers.image.revision.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "data_quality",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "neutral",
+          "source": "docker",
+          "strength": 0,
+          "subject": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "relation_type": "inferred",
+      "resolution_attempts": [],
+      "score": 0,
+      "score_components": [
+        {
+          "description": "A validated immutable Docker artifact identity is available.",
+          "name": "immutable_artifact_identity",
+          "value": 1
+        }
+      ],
+      "source_freshness": [
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "source": "docker"
+        }
+      ],
+      "sources": [
+        "docker"
+      ],
+      "supporting_evidence": [
+        {
+          "claim": "The running container uses immutable image identity sha256:2222222222222222222222222222222222222222222222222222222222222222.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "identity",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "supports",
+          "source": "docker",
+          "strength": 1,
+          "subject": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      ],
+      "target_id": "\u003cuuid\u003e",
+      "target_type": "correlation"
+    },
+    "generated_at": "\u003cgenerated-at\u003e",
+    "pagination": null,
+    "schema_version": "1.0",
+    "warnings": []
   }
 }

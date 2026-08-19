@@ -1,0 +1,28 @@
+{
+  "command": "explain",
+  "data": {
+    "conclusion": "The running immutable image maps exactly to commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+    "confidence": "EXACT",
+    "entities": {
+      "artifact": "\u003cuuid\u003e",
+      "commit": "\u003cuuid\u003e",
+      "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runtime": "\u003cuuid\u003e"
+    },
+    "evidence_counts": {
+      "contradicting": 0,
+      "neutral": 0,
+      "supporting": 3
+    },
+    "limitations": [
+      "This is a provenance correlation, not proof of causality."
+    ],
+    "relation_type": "exact",
+    "target_id": "\u003cuuid\u003e",
+    "target_type": "correlation"
+  },
+  "generated_at": "2026-08-19T12:00:00Z",
+  "pagination": null,
+  "schema_version": "1.0",
+  "warnings": []
+}

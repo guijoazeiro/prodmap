@@ -76,7 +76,7 @@ func (a *App) runStatus(ctx context.Context, args []string) error {
 		result.Migrations.Status, result.Migrations.Message, result.Git.Status, result.Git.Message,
 		result.Docker.Status, result.Docker.Message, displayOptional(result.LastSnapshot), result.Services, result.RuntimeInstances)
 	for _, warning := range warnings {
-		fmt.Fprintf(a.Stdout, "warning: %s\n", warning)
+		fmt.Fprintf(a.Stderr, "warning: %s\n", warning)
 	}
 	return nil
 }

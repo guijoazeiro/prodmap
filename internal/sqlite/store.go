@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	_ "modernc.org/sqlite"
@@ -18,7 +19,9 @@ const busyTimeoutMilliseconds = 5000
 
 // Store is a configured SQLite database.
 type Store struct {
-	db *sql.DB
+	db                    *sql.DB
+	now                   func() time.Time
+	evidenceBatchObserver func(int)
 }
 
 // Open opens path, configures SQLite, and applies all embedded migrations.
@@ -47,7 +50,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
-	store := &Store{db: db}
+	store := &Store{db: db, now: time.Now}
 	closeOnError := func(err error) (*Store, error) {
 		_ = db.Close()
 		return nil, err
@@ -65,6 +68,13 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return closeOnError(err)
 	}
 	return store, nil
+}
+
+func (s *Store) clockNow() time.Time {
+	if s != nil && s.now != nil {
+		return s.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func configure(ctx context.Context, db *sql.DB) error {

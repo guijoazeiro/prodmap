@@ -94,14 +94,53 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	if jsonRequested {
 		payload := ErrorPayload{Code: PublicErrorCode(err), Message: err.Error(), Retryable: errors.Is(err, errs.ErrUnavailable)}
+		var ambiguous *inventory.AmbiguousSelectorError
+		if errors.As(err, &ambiguous) {
+			payload.Details = map[string]any{"candidates": nonNilSelectorCandidates(ambiguous.Candidates)}
+		}
 		if writeErr := WriteError(a.Stdout, command, a.Now(), payload); writeErr != nil {
 			fmt.Fprintf(a.Stderr, "write JSON error: %v\n", writeErr)
 			return 1
 		}
 	} else {
-		fmt.Fprintln(a.Stderr, err)
+		var ambiguous *inventory.AmbiguousSelectorError
+		if errors.As(err, &ambiguous) {
+			fmt.Fprintln(a.Stderr, "explain target is ambiguous; choose one candidate:")
+			for _, candidate := range nonNilSelectorCandidates(ambiguous.Candidates) {
+				fmt.Fprintf(a.Stderr, "  %s %s", candidate.Type, candidate.ID)
+				if candidate.DisplayLabel != "" {
+					fmt.Fprintf(a.Stderr, " — %s", safeDisplayLabel(candidate.DisplayLabel))
+				}
+				fmt.Fprintln(a.Stderr)
+			}
+		} else {
+			fmt.Fprintln(a.Stderr, err)
+		}
 	}
 	return ExitCode(err)
+}
+
+func nonNilSelectorCandidates(values []inventory.SelectorCandidate) []inventory.SelectorCandidate {
+	if values == nil {
+		return []inventory.SelectorCandidate{}
+	}
+	return values
+}
+
+func safeDisplayLabel(value string) string {
+	value = strings.Map(func(character rune) rune {
+		if character < 0x20 || character == 0x7f {
+			return ' '
+		}
+		return character
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	const limit = 160
+	runes := []rune(value)
+	if len(runes) > limit {
+		value = string(runes[:limit]) + "…"
+	}
+	return value
 }
 
 func (a *App) runVersion(args []string) error {

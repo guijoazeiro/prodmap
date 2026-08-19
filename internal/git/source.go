@@ -28,7 +28,6 @@ import (
 const (
 	defaultOutputLimit    = 64 * 1024
 	defaultCommandTimeout = 5 * time.Second
-	maxDiagnosticRunes    = 512
 	maxRepositoryRunes    = 255
 	maxSubjectRunes       = 1024
 )
@@ -36,8 +35,6 @@ const (
 var (
 	fullSHA        = regexp.MustCompile(`^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$`)
 	scpLikeRemote  = regexp.MustCompile(`^(?:[^@/:[:space:]]+@)?([^/:[:space:]]+):(.+)$`)
-	credentialPair = regexp.MustCompile(`(?i)\b(token|password|passwd|secret|authorization|credential)=\S+`)
-	urlUserInfo    = regexp.MustCompile(`://[^/@[:space:]]+@`)
 	errOutputLimit = errors.New("command output limit exceeded")
 )
 
@@ -242,14 +239,37 @@ func (s *Source) classify(ctx context.Context, operation commandOperation, resul
 
 	category := errs.ErrUnavailable
 	code := exitCode(cause)
-	if !errors.Is(cause, errOutputLimit) && (operation == operationRepository || operation == operationHead || operation == operationResolve) && (code == 1 || code == 128) {
-		category = errs.ErrNotFound
+	if !errors.Is(cause, errOutputLimit) && (code == 1 || code == 128) {
+		switch operation {
+		case operationRepository, operationHead:
+			category = errs.ErrNotFound
+		case operationResolve:
+			if missingRevisionDiagnostic(result.stderr) {
+				category = errs.ErrNotFound
+			}
+		}
 	}
-	diagnostic := sanitizeDiagnostic(result.stderr, s.projectDir)
-	if diagnostic == "" {
-		return fmt.Errorf("%s: %w: %w", operation, category, cause)
+	return &sourceError{operation: operation, category: category, cause: cause}
+}
+
+type sourceError struct {
+	operation commandOperation
+	category  error
+	cause     error
+}
+
+func (e *sourceError) Error() string { return fmt.Sprintf("%s: %v", e.operation, e.category) }
+
+func (e *sourceError) Unwrap() []error { return []error{e.category, e.cause} }
+
+func missingRevisionDiagnostic(stderr []byte) bool {
+	message := strings.ToLower(string(stderr))
+	for _, marker := range []string{"needed a single revision", "unknown revision or path", "not a valid object name", "bad object", "ambiguous argument"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
 	}
-	return fmt.Errorf("%s (%s): %w: %w", operation, diagnostic, category, cause)
+	return false
 }
 
 func commandContextError(ctx context.Context, err error) error {
@@ -372,29 +392,6 @@ func repositoryName(canonicalURL string) string {
 	return truncateRunes(name, maxRepositoryRunes)
 }
 
-func sanitizeDiagnostic(raw []byte, projectDir string) string {
-	diagnostic := strings.TrimSpace(string(raw))
-	if projectDir != "" {
-		diagnostic = strings.ReplaceAll(diagnostic, projectDir, "<project-dir>")
-		if absolute, err := filepath.Abs(projectDir); err == nil {
-			diagnostic = strings.ReplaceAll(diagnostic, absolute, "<project-dir>")
-		}
-	}
-	diagnostic = strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' {
-			return ' '
-		}
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, diagnostic)
-	diagnostic = strings.Join(strings.Fields(diagnostic), " ")
-	diagnostic = credentialPair.ReplaceAllString(diagnostic, "$1=<redacted>")
-	diagnostic = urlUserInfo.ReplaceAllString(diagnostic, "://<redacted>@")
-	return truncateRunes(diagnostic, maxDiagnosticRunes)
-}
-
 func truncateRunes(value string, limit int) string {
 	if limit < 1 || utf8.RuneCountInString(value) <= limit {
 		return value
@@ -425,7 +422,7 @@ func (r execRunner) Run(ctx context.Context, name string, args ...string) (comma
 	stdout := &boundedBuffer{budget: budget}
 	stderr := &boundedBuffer{budget: budget}
 	command := exec.CommandContext(ctx, name, args...)
-	command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
+	command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	command.Stdout = stdout
 	command.Stderr = stderr
 	err := command.Run()

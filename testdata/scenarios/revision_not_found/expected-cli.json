@@ -3,27 +3,120 @@
   "command": [
     "prodmap",
     "explain",
-    "<correlation_id>",
+    "\u003ccorrelation_id\u003e",
+    "--detail",
+    "full",
     "--json"
   ],
   "exit_code": 0,
   "stderr": "",
   "stdout": {
-    "target_type": "correlation",
-    "confidence": "UNKNOWN",
-    "score": 0,
-    "relation_type": "inferred",
-    "algorithm": "provenance/v0-experimental",
+    "command": "explain",
+    "data": {
+      "algorithm": "provenance/v0-experimental",
+      "conclusion": "Commit provenance is unknown because a Git lookup did not find the declared revision locally.",
+      "confidence": "UNKNOWN",
+      "contradicting_evidence": [],
+      "entities": {
+        "artifact": "\u003cuuid\u003e",
+        "runtime": "\u003cuuid\u003e"
+      },
+      "freshness": "2026-08-19T12:00:00Z",
+      "hard_caps": [
+        {
+          "max_level": "UNKNOWN",
+          "name": "commit_not_found",
+          "reason": "The declared revision was not found by the local Git lookup."
+        }
+      ],
+      "limitations": [
+        "This is a provenance correlation, not proof of causality.",
+        "Required provenance data is missing or contradictory."
+      ],
+      "missing": [
+        "locally resolvable commit"
+      ],
+      "neutral_evidence": [
+        {
+          "claim": "A Git lookup was executed, but the declared OCI revision was not found in the local repository.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "data_quality",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "neutral",
+          "source": "git",
+          "strength": 0,
+          "subject": "dddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "relation_type": "inferred",
+      "resolution_attempts": [
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "revision": "dddddddddddddddddddddddddddddddddddddddd",
+          "source": "git",
+          "state": "not_found"
+        }
+      ],
+      "score": 0,
+      "score_components": [
+        {
+          "description": "The image declares a complete normalized OCI revision.",
+          "name": "declared_oci_revision",
+          "value": 0.7
+        },
+        {
+          "description": "A validated immutable Docker artifact identity is available.",
+          "name": "immutable_artifact_identity",
+          "value": 1
+        }
+      ],
+      "source_freshness": [
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "source": "docker"
+        },
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "source": "git"
+        }
+      ],
+      "sources": [
+        "docker",
+        "git"
+      ],
+      "supporting_evidence": [
+        {
+          "claim": "The running container uses immutable image identity sha256:3333333333333333333333333333333333333333333333333333333333333333.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "identity",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "supports",
+          "source": "docker",
+          "strength": 1,
+          "subject": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        {
+          "claim": "The image declares OCI revision dddddddddddddddddddddddddddddddddddddddd.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "identity",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "supports",
+          "source": "docker",
+          "strength": 0.7,
+          "subject": "dddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "target_id": "\u003cuuid\u003e",
+      "target_type": "correlation"
+    },
+    "generated_at": "\u003cgenerated-at\u003e",
+    "pagination": null,
+    "schema_version": "1.0",
     "warnings": [
       "OCI revision not found in local repository"
-    ],
-    "missing": [
-      "locally resolvable commit"
-    ],
-    "evidence_kinds": [
-      "identity",
-      "identity",
-      "data_quality"
     ]
   }
 }
