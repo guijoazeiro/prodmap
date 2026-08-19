@@ -48,7 +48,7 @@ A hipótese do produto é:
 
 > Contexto de produção previamente correlacionado permite que pessoas e agentes diagnostiquem problemas com mais rapidez, precisão e menos exploração do que o acesso bruto e separado a logs, métricas e traces.
 
-O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo.
+O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo. A Foundation e um protótipo estritamente limitado ao necessário para produzir o pacote do experimento PODEM ser construídos antes da decisão, como investimento de validação; isso não constitui evidência de `go` nem autoriza Phase 2 ou posteriores.
 
 ### 2.1 Experimento 001 — correlação versus contexto bruto
 
@@ -696,6 +696,8 @@ Entregas:
 - rascunho da Correlation Model Specification.
 
 **Gate:** ganho consistente e mensurável, ou uma tese revisada que justifique continuar.
+
+**Exceção de validação:** Phase 0 e, quando autorizado explicitamente, o menor protótipo da Phase 1 necessário ao Experimento 001 podem avançar antes deste gate. Essa exceção não valida a tese, não autoriza expansão do roadmap e não substitui a decisão documentada `go`, `pivot` ou `stop`.
 
 ### Phase 0 — Foundation
 

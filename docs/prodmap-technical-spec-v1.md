@@ -79,6 +79,8 @@ Regras:
 
 SQLite será o armazenamento padrão nas Phases 0–4.
 
+O driver inicial é `modernc.org/sqlite`, fixado no módulo. Ele foi escolhido para manter o binário e os testes portáveis sem exigir CGO; trocar o driver exige revisar compatibilidade, licença, pragmas e comportamento transacional.
+
 Requisitos:
 
 - foreign keys habilitadas;
@@ -160,6 +162,8 @@ defaults compilados
 ```
 
 O arquivo usa YAML. Campos desconhecidos causam erro. Configuração efetiva pode ser exibida com segredos redigidos.
+
+O parser inicial é `go.yaml.in/yaml/v3`, fixado no módulo, por oferecer uma API pequena, mantida e decodificação estrita sem introduzir um framework de configuração. Trocar o parser ou relaxar campos desconhecidos exige atualizar esta decisão.
 
 Paths padrão:
 
@@ -1344,7 +1348,7 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 ## 27. Ordem recomendada de implementação
 
 ```text
-0. executar a Phase -1 e registrar go, pivot ou stop
+0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation e o protótipo mínimo usado para produzir o pacote experimental podem anteceder a decisão sem representar `go`
 1. materializar somente os ADRs necessários para Phase 0/1
 2. criar o esqueleto mínimo por capacidades
 3. implementar tipos fundamentais: IDs, tempo, enums e erros
