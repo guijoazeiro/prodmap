@@ -1,0 +1,180 @@
+package cli
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/guijoazeiro/prodmap/internal/config"
+	"github.com/guijoazeiro/prodmap/internal/errs"
+	"github.com/guijoazeiro/prodmap/internal/logging"
+)
+
+// App owns the CLI process dependencies and keeps command execution testable.
+type App struct {
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Now            func() time.Time
+	WorkingDir     func() (string, error)
+	Environment    map[string]string
+	UserConfigPath string
+	BuildInfo      BuildInfo
+	LookPath       func(string) (string, error)
+	RunExternal    func(context.Context, string, ...string) error
+}
+
+// NewApp constructs a CLI using process-backed defaults.
+func NewApp(stdout, stderr io.Writer, buildInfo BuildInfo) *App {
+	return &App{
+		Stdout:      stdout,
+		Stderr:      stderr,
+		Now:         time.Now,
+		WorkingDir:  os.Getwd,
+		Environment: processEnvironment(),
+		BuildInfo:   buildInfo,
+		LookPath:    exec.LookPath,
+		RunExternal: func(ctx context.Context, name string, args ...string) error {
+			return exec.CommandContext(ctx, name, args...).Run()
+		},
+	}
+}
+
+// Run executes one CLI invocation and returns its process exit code.
+func (a *App) Run(ctx context.Context, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor> [flags]")
+		return ExitCode(errs.ErrInvalid)
+	}
+
+	command := args[0]
+	jsonRequested := containsJSONFlag(args[1:])
+	var err error
+	switch command {
+	case "version":
+		err = a.runVersion(args[1:])
+	case "init":
+		err = a.runInit(ctx, args[1:])
+	case "doctor":
+		err = a.runDoctor(ctx, args[1:])
+	default:
+		err = fmt.Errorf("unknown command %q: %w", command, errs.ErrInvalid)
+	}
+	if err == nil {
+		return 0
+	}
+
+	var rendered *renderedError
+	if errors.As(err, &rendered) {
+		return ExitCode(rendered.err)
+	}
+	if jsonRequested {
+		payload := ErrorPayload{Code: PublicErrorCode(err), Message: err.Error(), Retryable: errors.Is(err, errs.ErrUnavailable)}
+		if writeErr := WriteError(a.Stdout, command, a.Now(), payload); writeErr != nil {
+			fmt.Fprintf(a.Stderr, "write JSON error: %v\n", writeErr)
+			return 1
+		}
+	} else {
+		fmt.Fprintln(a.Stderr, err)
+	}
+	return ExitCode(err)
+}
+
+func (a *App) runVersion(args []string) error {
+	flags := flag.NewFlagSet("version", flag.ContinueOnError)
+	flags.SetOutput(a.Stderr)
+	jsonOutput := flags.Bool("json", false, "emit JSON")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse version flags: %w: %v", errs.ErrInvalid, err)
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("version accepts no arguments: %w", errs.ErrInvalid)
+	}
+	return WriteVersion(a.Stdout, a.BuildInfo, *jsonOutput, a.Now())
+}
+
+func (a *App) loadConfig(projectDir, dataDir string) (config.Config, error) {
+	overrides := config.Overrides{}
+	if projectDir != "" {
+		overrides.ProjectDir = &projectDir
+	}
+	if dataDir != "" {
+		overrides.DataDir = &dataDir
+	}
+	userPath := a.UserConfigPath
+	if userPath == "" {
+		if xdg := a.Environment["XDG_CONFIG_HOME"]; xdg != "" {
+			userPath = filepath.Join(xdg, "prodmap", "config.yaml")
+		} else if home := a.Environment["HOME"]; home != "" {
+			userPath = filepath.Join(home, ".config", "prodmap", "config.yaml")
+		}
+	}
+	return config.Load(config.Options{
+		ProjectDir:     projectDir,
+		UserConfigPath: userPath,
+		Env:            a.Environment,
+		Overrides:      overrides,
+	})
+}
+
+func (a *App) commandLogger(cfg config.Config, operationID string) (*slog.Logger, error) {
+	logger, err := logging.New(a.Stderr, logging.Options{Level: cfg.Log.Level, Format: cfg.Log.Format})
+	if err != nil {
+		return nil, &errs.ConfigError{Err: fmt.Errorf("construct logger: %w", err)}
+	}
+	return logger.With("operation_id", operationID, "source", "cli"), nil
+}
+
+func (a *App) currentWorkingDir() (string, error) {
+	dir, err := a.WorkingDir()
+	if err != nil {
+		return "", fmt.Errorf("determine current directory: %w", errs.ErrInvalid)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve current directory: %w", errs.ErrInvalid)
+	}
+	return abs, nil
+}
+
+func operationID() string {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "unavailable"
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+func processEnvironment() map[string]string {
+	result := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func containsJSONFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" || arg == "-json" || strings.HasPrefix(arg, "--json=") {
+			return true
+		}
+	}
+	return false
+}
+
+type renderedError struct{ err error }
+
+func (e *renderedError) Error() string { return e.err.Error() }
+func (e *renderedError) Unwrap() error { return e.err }
