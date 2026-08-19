@@ -20,6 +20,7 @@ type Refresher struct {
 	Runtime     RuntimeSource
 	Commits     CommitSource
 	Store       SnapshotStore
+	Now         func() time.Time
 }
 
 func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
@@ -28,8 +29,12 @@ func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 	}
 	refreshOperationID := strings.TrimSpace(r.OperationID)
 	if refreshOperationID == "" {
+		now := r.Now
+		if now == nil {
+			now = time.Now
+		}
 		var err error
-		refreshOperationID, err = identity.NewV7(time.Now().UTC())
+		refreshOperationID, err = identity.NewV7(now().UTC())
 		if err != nil {
 			return RefreshResult{}, err
 		}
@@ -38,21 +43,36 @@ func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 	if err != nil {
 		return RefreshResult{}, fmt.Errorf("inspect Docker runtime: %w", err)
 	}
+
 	var repository Repository
-	var repositoryErr error
+	repositoryAvailable := false
 	if r.Commits == nil {
-		repositoryErr = fmt.Errorf("%w: Git commit source is not configured", errs.ErrUnavailable)
+		batch.Warnings = append(batch.Warnings, "Git commit source is not configured")
 	} else {
-		repository, repositoryErr = r.Commits.Repository(ctx)
+		repositoryResult, repositoryErr := r.Commits.Repository(ctx)
+		switch {
+		case repositoryErr == nil:
+			repository = repositoryResult
+			repositoryAvailable = true
+		case errors.Is(repositoryErr, errs.ErrNotFound):
+			batch.Warnings = append(batch.Warnings, "Git repository is not available")
+		case errors.Is(repositoryErr, errs.ErrUnavailable):
+			batch.Warnings = append(batch.Warnings, "Git source is unavailable")
+		default:
+			return RefreshResult{}, fmt.Errorf("inspect Git repository: %w", repositoryErr)
+		}
 	}
-	snapshot := Snapshot{OperationID: refreshOperationID, ObservedAt: batch.ObservedAt, Rejected: batch.Rejected, Warnings: append([]string{}, batch.Warnings...)}
-	if repositoryErr == nil {
+
+	snapshot := Snapshot{
+		OperationID: refreshOperationID,
+		ObservedAt:  batch.ObservedAt,
+		Rejected:    batch.Rejected,
+		Warnings:    append([]string{}, batch.Warnings...),
+	}
+	if repositoryAvailable {
 		snapshot.Repository = &repository
-	} else if !errors.Is(repositoryErr, errs.ErrNotFound) && !errors.Is(repositoryErr, errs.ErrUnavailable) {
-		return RefreshResult{}, fmt.Errorf("inspect Git repository: %w", repositoryErr)
-	} else {
-		snapshot.Warnings = append(snapshot.Warnings, repositoryErr.Error())
 	}
+
 	for _, observation := range batch.Observations {
 		if err := ctx.Err(); err != nil {
 			return RefreshResult{}, err
@@ -60,37 +80,65 @@ func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 		if snapshot.ObservedAt.IsZero() || observation.ObservedAt.After(snapshot.ObservedAt) {
 			snapshot.ObservedAt = observation.ObservedAt
 		}
+		observedAt := observation.ObservedAt
+		if observedAt.IsZero() {
+			observedAt = batch.ObservedAt
+		}
+
 		artifact, identityConflict := NormalizeArtifact(observation)
 		input := correlation.ProvenanceInput{
 			ImmutableIdentity: artifact.Identity,
 			MutableAlias:      artifact.ObservedReference,
+			IdentityIssues:    append([]string{}, artifact.IdentityIssues...),
 			OCIRevision:       artifact.OCIRevision,
+			RevisionState:     correlation.RevisionNotApplicable,
 			IdentityConflict:  identityConflict,
-			ObservedAt:        observation.ObservedAt,
+			ObservedAt:        observedAt,
 		}
 		if artifact.IdentityKind == "mutable_tag" {
 			input.ImmutableIdentity = ""
 		}
+		for _, issue := range artifact.MetadataIssues {
+			if issue == issueInvalidOCICreated {
+				input.ImageCreatedInvalid = true
+				continue
+			}
+			input.IdentityIssues = append(input.IdentityIssues, issue)
+		}
+
 		var commit *Commit
-		if artifact.OCIRevision != "" && snapshot.Repository != nil && !identityConflict {
-			if !fullSHA.MatchString(strings.TrimSpace(artifact.OCIRevision)) {
-				input.RevisionInvalid = true
-			} else {
-				resolved, resolveErr := r.Commits.ResolveCommit(ctx, artifact.OCIRevision)
-				if resolveErr == nil && strings.EqualFold(resolved.SHA, artifact.OCIRevision) {
-					commit = &resolved
-					input.ResolvedCommitSHA = resolved.SHA
-					input.CommitTime = &resolved.CommitTime
-				} else if resolveErr == nil || errors.Is(resolveErr, errs.ErrConflict) {
-					input.RevisionMismatch = true
-				} else if errors.Is(resolveErr, errs.ErrNotFound) {
-					input.RevisionNotFound = true
-				} else {
-					return RefreshResult{}, fmt.Errorf("resolve OCI revision: %w", resolveErr)
-				}
+		switch {
+		case artifact.RevisionInvalid:
+			input.OCIRevision = ""
+			input.RevisionState = correlation.RevisionInvalid
+		case artifact.OCIRevision == "":
+			input.RevisionState = correlation.RevisionNotApplicable
+		case identityConflict:
+			input.RevisionState = correlation.RevisionQueryNotRun
+		case !repositoryAvailable:
+			input.RevisionState = correlation.RevisionSourceUnavailable
+		default:
+			resolved, resolveErr := r.Commits.ResolveCommit(ctx, artifact.OCIRevision)
+			switch {
+			case resolveErr == nil && strings.EqualFold(resolved.SHA, artifact.OCIRevision):
+				resolved.SHA = strings.ToLower(resolved.SHA)
+				commit = &resolved
+				input.ResolvedCommitSHA = resolved.SHA
+				input.CommitTime = &resolved.CommitTime
+				input.RevisionState = correlation.RevisionResolved
+			case resolveErr == nil || errors.Is(resolveErr, errs.ErrConflict):
+				input.RevisionState = correlation.RevisionMismatched
+			case errors.Is(resolveErr, errs.ErrNotFound):
+				input.RevisionState = correlation.RevisionNotFound
+			case errors.Is(resolveErr, errs.ErrUnavailable):
+				input.RevisionState = correlation.RevisionSourceUnavailable
+				snapshot.Warnings = append(snapshot.Warnings, "Git source became unavailable before OCI revision resolution completed")
+			default:
+				return RefreshResult{}, fmt.Errorf("resolve OCI revision: %w", resolveErr)
 			}
 		}
-		if created := artifact.OCILabels["org.opencontainers.image.created"]; created != "" {
+
+		if created := artifact.OCILabels[ociCreatedLabel]; created != "" {
 			parsed, parseErr := time.Parse(time.RFC3339Nano, created)
 			if parseErr != nil {
 				input.ImageCreatedInvalid = true
@@ -101,9 +149,22 @@ func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 		}
 		result := correlation.EvaluateProvenance(input)
 		snapshot.Warnings = append(snapshot.Warnings, result.Warnings...)
+		sanitizedRuntime := observation
+		sanitizedRuntime.ObservedAt = observedAt
+		sanitizedRuntime.ImageID = artifact.ImageID
+		sanitizedRuntime.RepoDigests = nil
+		sanitizedRuntime.OCILabels = make(map[string]string, len(artifact.OCILabels))
+		for key, value := range artifact.OCILabels {
+			sanitizedRuntime.OCILabels[key] = value
+		}
 		snapshot.Items = append(snapshot.Items, SnapshotItem{
-			ServiceLogicalKey: NormalizeServiceKey(observation), ServiceDisplayName: NormalizeServiceKey(observation), Environment: "default",
-			Runtime: observation, Artifact: artifact, Commit: commit, Correlation: result,
+			ServiceLogicalKey:  NormalizeServiceKey(observation),
+			ServiceDisplayName: NormalizeServiceKey(observation),
+			Environment:        "default",
+			Runtime:            sanitizedRuntime,
+			Artifact:           artifact,
+			Commit:             commit,
+			Correlation:        result,
 		})
 	}
 	result, err := r.Store.SaveRuntimeSnapshot(ctx, snapshot)

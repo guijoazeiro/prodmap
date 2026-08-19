@@ -28,7 +28,6 @@ const (
 var allowedOCILabels = [...]string{
 	"org.opencontainers.image.revision",
 	"org.opencontainers.image.source",
-	"org.opencontainers.image.version",
 	"org.opencontainers.image.created",
 }
 
@@ -37,7 +36,7 @@ var allowedOCILabels = [...]string{
 // health-check logs, or the complete image label map to this process.
 const containerInspectTemplate = `{"id":{{json .Id}},"name":{{json .Name}},"image_reference":{{json .Config.Image}},"image_id":{{json .Image}},"state":{{json .State.Status}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}""{{end}},"restart_count":{{json .RestartCount}},"started_at":{{json .State.StartedAt}}}`
 
-const imageInspectTemplate = `{"id":{{json .Id}},"repo_digests":{{json .RepoDigests}},"repo_tags":{{json .RepoTags}},"labels":{"org.opencontainers.image.revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"org.opencontainers.image.source":{{json (index .Config.Labels "org.opencontainers.image.source")}},"org.opencontainers.image.version":{{json (index .Config.Labels "org.opencontainers.image.version")}},"org.opencontainers.image.created":{{json (index .Config.Labels "org.opencontainers.image.created")}}}}`
+const imageInspectTemplate = `{"id":{{json .Id}},"repo_digests":{{json .RepoDigests}},"repo_tags":{{json .RepoTags}},"labels":{"org.opencontainers.image.revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"org.opencontainers.image.source":{{json (index .Config.Labels "org.opencontainers.image.source")}},"org.opencontainers.image.created":{{json (index .Config.Labels "org.opencontainers.image.created")}}}}`
 
 type commandRunner interface {
 	Run(ctx context.Context, args ...string) ([]byte, error)
@@ -221,6 +220,10 @@ func inspectOne(ctx context.Context, runner commandRunner, containerID string, o
 	if err != nil {
 		return inventory.RuntimeObservation{}, "", fmt.Errorf("decode Docker container start time: %w", err)
 	}
+	health := strings.TrimSpace(container.Health)
+	if health == "" {
+		health = "none"
+	}
 
 	return inventory.RuntimeObservation{
 		ExternalID:     container.ID,
@@ -231,7 +234,7 @@ func inspectOne(ctx context.Context, runner commandRunner, containerID string, o
 		RepoTags:       uniqueSorted(image.RepoTags),
 		OCILabels:      filterOCILabels(image.Labels),
 		State:          container.State,
-		Health:         container.Health,
+		Health:         health,
 		RestartCount:   container.RestartCount,
 		StartedAt:      startedAt,
 		ObservedAt:     observedAt,

@@ -5,6 +5,8 @@ import "time"
 
 const AlgorithmVersion = "provenance/v0-experimental"
 
+const MaxImageCreatedClockSkew = 5 * time.Minute
+
 type Level string
 
 const (
@@ -50,14 +52,49 @@ type Evidence struct {
 	Details    map[string]string
 }
 
+type RevisionResolutionState string
+
+const (
+	RevisionNotApplicable     RevisionResolutionState = "not_applicable"
+	RevisionInvalid           RevisionResolutionState = "invalid"
+	RevisionQueryNotRun       RevisionResolutionState = "query_not_executed"
+	RevisionSourceUnavailable RevisionResolutionState = "source_unavailable"
+	RevisionNotFound          RevisionResolutionState = "not_found"
+	RevisionResolved          RevisionResolutionState = "resolved"
+	RevisionMismatched        RevisionResolutionState = "mismatched"
+)
+
+type ResolutionAttempt struct {
+	State      RevisionResolutionState
+	Source     string
+	Revision   string
+	ObservedAt time.Time
+}
+
+type ScoreComponent struct {
+	Name        string
+	Value       float64
+	Description string
+}
+
+type HardCap struct {
+	Name     string
+	MaxLevel Level
+	Reason   string
+}
+
+type SourceFreshness struct {
+	Source     string
+	ObservedAt time.Time
+}
+
 type ProvenanceInput struct {
 	ImmutableIdentity   string
 	MutableAlias        string
+	IdentityIssues      []string
 	OCIRevision         string
 	ResolvedCommitSHA   string
-	RevisionInvalid     bool
-	RevisionNotFound    bool
-	RevisionMismatch    bool
+	RevisionState       RevisionResolutionState
 	IdentityConflict    bool
 	ImageCreatedAt      *time.Time
 	CommitTime          *time.Time
@@ -66,12 +103,16 @@ type ProvenanceInput struct {
 }
 
 type Result struct {
-	RelationType RelationType
-	Level        Level
-	Score        float64
-	Algorithm    string
-	Conclusion   string
-	Missing      []string
-	Warnings     []string
-	Evidence     []Evidence
+	RelationType       RelationType
+	Level              Level
+	Score              float64
+	Algorithm          string
+	Conclusion         string
+	Missing            []string
+	Warnings           []string
+	Evidence           []Evidence
+	ScoreComponents    []ScoreComponent
+	HardCaps           []HardCap
+	ResolutionAttempts []ResolutionAttempt
+	SourceFreshness    []SourceFreshness
 }

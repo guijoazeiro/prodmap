@@ -65,6 +65,9 @@ type Artifact struct {
 	Aliases           []string
 	OCIRevision       string
 	OCILabels         map[string]string
+	IdentityIssues    []string
+	MetadataIssues    []string
+	RevisionInvalid   bool
 }
 
 type SnapshotItem struct {
@@ -154,22 +157,26 @@ type Status struct {
 }
 
 type Explanation struct {
-	TargetID      string
-	TargetType    string
-	Conclusion    string
-	RelationType  correlation.RelationType
-	Confidence    correlation.Level
-	Score         float64
-	Algorithm     string
-	Entities      map[string]string
-	Supporting    []PersistedEvidence
-	Contradicting []PersistedEvidence
-	Neutral       []PersistedEvidence
-	Missing       []string
-	Warnings      []string
-	Sources       []string
-	ObservedAt    time.Time
-	Limitations   []string
+	TargetID           string
+	TargetType         string
+	Conclusion         string
+	RelationType       correlation.RelationType
+	Confidence         correlation.Level
+	Score              float64
+	Algorithm          string
+	Entities           map[string]string
+	Supporting         []PersistedEvidence
+	Contradicting      []PersistedEvidence
+	Neutral            []PersistedEvidence
+	Missing            []string
+	Warnings           []string
+	Sources            []string
+	ObservedAt         time.Time
+	Limitations        []string
+	ScoreComponents    []correlation.ScoreComponent
+	HardCaps           []correlation.HardCap
+	ResolutionAttempts []correlation.ResolutionAttempt
+	SourceFreshness    []correlation.SourceFreshness
 }
 
 type PersistedEvidence struct {
@@ -181,6 +188,7 @@ type PersistedEvidence struct {
 	Strength   float64
 	Source     string
 	ObservedAt time.Time
+	Details    map[string]string
 }
 
 type Reader interface {
