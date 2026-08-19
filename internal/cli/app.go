@@ -16,7 +16,10 @@ import (
 	"time"
 
 	"github.com/guijoazeiro/prodmap/internal/config"
+	prodmapdocker "github.com/guijoazeiro/prodmap/internal/docker"
 	"github.com/guijoazeiro/prodmap/internal/errs"
+	prodmapgit "github.com/guijoazeiro/prodmap/internal/git"
+	"github.com/guijoazeiro/prodmap/internal/inventory"
 	"github.com/guijoazeiro/prodmap/internal/logging"
 )
 
@@ -31,6 +34,8 @@ type App struct {
 	BuildInfo      BuildInfo
 	LookPath       func(string) (string, error)
 	RunExternal    func(context.Context, string, ...string) error
+	RuntimeSource  func() inventory.RuntimeSource
+	CommitSource   func(string) inventory.CommitSource
 }
 
 // NewApp constructs a CLI using process-backed defaults.
@@ -46,13 +51,15 @@ func NewApp(stdout, stderr io.Writer, buildInfo BuildInfo) *App {
 		RunExternal: func(ctx context.Context, name string, args ...string) error {
 			return exec.CommandContext(ctx, name, args...).Run()
 		},
+		RuntimeSource: func() inventory.RuntimeSource { return prodmapdocker.NewSource() },
+		CommitSource:  func(projectDir string) inventory.CommitSource { return prodmapgit.New(projectDir) },
 	}
 }
 
 // Run executes one CLI invocation and returns its process exit code.
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor> [flags]")
+		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain> [flags]")
 		return ExitCode(errs.ErrInvalid)
 	}
 
@@ -66,6 +73,14 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		err = a.runInit(ctx, args[1:])
 	case "doctor":
 		err = a.runDoctor(ctx, args[1:])
+	case "status":
+		err = a.runStatus(ctx, args[1:])
+	case "services":
+		err = a.runServices(ctx, args[1:])
+	case "runtime":
+		err = a.runRuntime(ctx, args[1:])
+	case "explain":
+		err = a.runExplain(ctx, args[1:])
 	default:
 		err = fmt.Errorf("unknown command %q: %w", command, errs.ErrInvalid)
 	}
