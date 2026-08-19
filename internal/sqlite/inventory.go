@@ -20,6 +20,25 @@ import (
 )
 
 func (s *Store) SaveRuntimeSnapshot(ctx context.Context, snapshot inventory.Snapshot) (inventory.RefreshResult, error) {
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		result, err := s.saveRuntimeSnapshot(ctx, snapshot)
+		if err == nil || !isSQLiteBusy(err) {
+			return result, err
+		}
+		lastErr = err
+		timer := time.NewTimer(time.Duration(attempt+1) * 10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return inventory.RefreshResult{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return inventory.RefreshResult{}, lastErr
+}
+
+func (s *Store) saveRuntimeSnapshot(ctx context.Context, snapshot inventory.Snapshot) (inventory.RefreshResult, error) {
 	if snapshot.ObservedAt.IsZero() {
 		return inventory.RefreshResult{}, fmt.Errorf("%w: snapshot observed_at is required", errs.ErrInvalid)
 	}
@@ -28,14 +47,18 @@ func (s *Store) SaveRuntimeSnapshot(ctx context.Context, snapshot inventory.Snap
 		return inventory.RefreshResult{}, fmt.Errorf("%w: begin runtime snapshot: %w", errs.ErrUnavailable, err)
 	}
 	defer tx.Rollback()
-	now := time.Now().UTC()
-	dockerSourceID, err := ensureSource(ctx, tx, "docker", "local", snapshot.ObservedAt, now)
+	now := s.clockNow()
+	dockerStatus := "success"
+	if snapshot.Rejected > 0 {
+		dockerStatus = "partial"
+	}
+	dockerSourceID, err := ensureSource(ctx, tx, "docker", "local", dockerStatus, snapshot.ObservedAt, now)
 	if err != nil {
 		return inventory.RefreshResult{}, err
 	}
 	var repositoryID string
 	if snapshot.Repository != nil {
-		gitSourceID, sourceErr := ensureSource(ctx, tx, "git", snapshot.Repository.ExternalID, snapshot.ObservedAt, now)
+		gitSourceID, sourceErr := ensureSource(ctx, tx, "git", snapshot.Repository.ExternalID, "success", snapshot.ObservedAt, now)
 		if sourceErr != nil {
 			return inventory.RefreshResult{}, sourceErr
 		}
@@ -66,14 +89,16 @@ func (s *Store) SaveRuntimeSnapshot(ctx context.Context, snapshot inventory.Snap
 				return inventory.RefreshResult{}, err
 			}
 		}
-		runtimeID, created, runtimeErr := ensureRuntime(ctx, tx, dockerSourceID, serviceID, artifactID, item, now)
+		runtimeID, _, runtimeErr := ensureRuntime(ctx, tx, dockerSourceID, serviceID, artifactID, item, now)
 		if runtimeErr != nil {
 			return inventory.RefreshResult{}, runtimeErr
 		}
-		if created {
-			if err := insertCorrelation(ctx, tx, runtimeID, artifactID, commitID, item.Correlation, item.Runtime.ObservedAt, now); err != nil {
-				return inventory.RefreshResult{}, err
-			}
+		commitSHA := ""
+		if item.Commit != nil {
+			commitSHA = strings.ToLower(item.Commit.SHA)
+		}
+		if err := reconcileCorrelation(ctx, tx, runtimeID, artifactID, commitID, item.Artifact.Identity, commitSHA, item.Correlation, item.Runtime.ObservedAt, now); err != nil {
+			return inventory.RefreshResult{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -86,7 +111,15 @@ func (s *Store) SaveRuntimeSnapshot(ctx context.Context, snapshot inventory.Snap
 	}, nil
 }
 
-func ensureSource(ctx context.Context, tx *sql.Tx, kind, instanceKey string, observedAt, now time.Time) (string, error) {
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToUpper(err.Error())
+	return strings.Contains(message, "SQLITE_BUSY") || strings.Contains(message, "DATABASE IS LOCKED")
+}
+
+func ensureSource(ctx context.Context, tx *sql.Tx, kind, instanceKey, status string, observedAt, now time.Time) (string, error) {
 	var id string
 	err := tx.QueryRowContext(ctx, "SELECT id FROM sources WHERE kind = ? AND instance_key = ?", kind, instanceKey).Scan(&id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -99,9 +132,16 @@ func ensureSource(ctx context.Context, tx *sql.Tx, kind, instanceKey string, obs
 		if err != nil {
 			return "", err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO sources(id, kind, name, instance_key, last_sync_at, last_status, created_at, updated_at) VALUES(?,?,?,?,?,'success',?,?)`, id, kind, kind+" local", instanceKey, observed, stamp, stamp)
+		_, err = tx.ExecContext(ctx, `INSERT INTO sources(id, kind, name, instance_key, last_sync_at, last_status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, kind, kind+" local", instanceKey, observed, status, stamp, stamp)
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE sources SET last_sync_at = CASE WHEN last_sync_at IS NULL OR last_sync_at < ? THEN ? ELSE last_sync_at END, last_status='success', updated_at=? WHERE id=?`, observed, observed, stamp, id)
+		_, err = tx.ExecContext(ctx, `UPDATE sources SET
+			last_status=CASE
+				WHEN last_sync_at IS NULL OR last_sync_at < ? THEN ?
+				WHEN last_sync_at = ? AND (last_status = 'partial' OR ? = 'partial') THEN 'partial'
+				ELSE last_status
+			END,
+			last_sync_at=CASE WHEN last_sync_at IS NULL OR last_sync_at < ? THEN ? ELSE last_sync_at END,
+			updated_at=? WHERE id=?`, observed, status, observed, status, observed, observed, stamp, id)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%w: save %s source: %w", errs.ErrUnavailable, kind, err)
@@ -190,8 +230,14 @@ func ensureArtifact(ctx context.Context, tx *sql.Tx, sourceID string, item inven
 			_, err = tx.ExecContext(ctx, `INSERT INTO artifacts(id,source_id,kind,name,identity_kind,identity,digest_algorithm,digest,image_id,observed_reference,oci_revision,oci_labels_json,observed_at,ingested_at,created_at,updated_at) VALUES(?,?,'container_image',?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, sourceID, artifact.Name, artifact.IdentityKind, artifact.Identity, nullString(artifact.DigestAlgorithm), nullString(artifact.Digest), nullString(artifact.ImageID), nullString(artifact.ObservedReference), nullString(artifact.OCIRevision), string(encodedLabels), observed, stamp, stamp, stamp)
 		}
 	} else if err == nil {
-		if existingObserved == observed && (existingReference != artifact.ObservedReference || existingRevision != artifact.OCIRevision || existingLabels != string(encodedLabels)) {
-			return "", fmt.Errorf("%w: artifact metadata changed for the same identity and observed_at", errs.ErrConflict)
+		if existingObserved == observed {
+			mergedReference, mergedRevision, mergedLabels, mergeErr := mergeArtifactMetadata(existingReference, existingRevision, existingLabels, artifact)
+			if mergeErr != nil {
+				return "", mergeErr
+			}
+			artifact.ObservedReference = mergedReference
+			artifact.OCIRevision = mergedRevision
+			encodedLabels = mergedLabels
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE artifacts SET observed_reference=CASE WHEN observed_at<=? THEN ? ELSE observed_reference END, oci_revision=CASE WHEN observed_at<=? THEN ? ELSE oci_revision END, oci_labels_json=CASE WHEN observed_at<=? THEN ? ELSE oci_labels_json END, observed_at=CASE WHEN observed_at<=? THEN ? ELSE observed_at END, ingested_at=?, updated_at=? WHERE id=?`, observed, nullString(artifact.ObservedReference), observed, nullString(artifact.OCIRevision), observed, string(encodedLabels), observed, observed, stamp, stamp, id)
 	}
@@ -199,11 +245,122 @@ func ensureArtifact(ctx context.Context, tx *sql.Tx, sourceID string, item inven
 		return "", fmt.Errorf("%w: save artifact: %w", errs.ErrUnavailable, err)
 	}
 	for _, alias := range artifact.Aliases {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO artifact_aliases(artifact_id,alias,valid_from) VALUES(?,?,?)`, id, alias, observed); err != nil {
-			return "", fmt.Errorf("%w: save artifact alias: %w", errs.ErrUnavailable, err)
+		if err := observeArtifactAlias(ctx, tx, id, alias, observed, stamp); err != nil {
+			return "", err
 		}
 	}
 	return id, nil
+}
+
+func mergeArtifactMetadata(existingReference, existingRevision, existingLabels string, artifact inventory.Artifact) (string, string, []byte, error) {
+	reference := existingReference
+	if reference == "" || artifact.ObservedReference != "" && artifact.ObservedReference < reference {
+		reference = artifact.ObservedReference
+	}
+	revision := existingRevision
+	switch {
+	case revision == artifact.OCIRevision:
+	case revision == "":
+		revision = artifact.OCIRevision
+	case artifact.OCIRevision == "":
+	default:
+		return "", "", nil, fmt.Errorf("%w: artifact revision changed for the same identity and observed_at", errs.ErrConflict)
+	}
+	stored := map[string]string{}
+	if err := json.Unmarshal([]byte(existingLabels), &stored); err != nil {
+		return "", "", nil, fmt.Errorf("%w: decode stored OCI labels: %w", errs.ErrIncompatible, err)
+	}
+	for key, value := range artifact.OCILabels {
+		if previous, exists := stored[key]; exists && previous != value {
+			return "", "", nil, fmt.Errorf("%w: OCI metadata changed for the same artifact and observed_at", errs.ErrConflict)
+		}
+		stored[key] = value
+	}
+	encoded, err := json.Marshal(stored)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("encode merged OCI labels: %w", err)
+	}
+	return reference, revision, encoded, nil
+}
+
+func observeArtifactAlias(ctx context.Context, tx *sql.Tx, artifactID, alias, observed, created string) error {
+	var existingArtifactID, existingKind string
+	err := tx.QueryRowContext(ctx, `SELECT o.artifact_id,a.identity_kind FROM artifact_alias_observations o JOIN artifacts a ON a.id=o.artifact_id WHERE o.alias=? AND o.observed_at=?`, alias, observed).Scan(&existingArtifactID, &existingKind)
+	switch {
+	case err == nil && existingArtifactID != artifactID:
+		var newKind string
+		if queryErr := tx.QueryRowContext(ctx, `SELECT identity_kind FROM artifacts WHERE id=?`, artifactID).Scan(&newKind); queryErr != nil {
+			return fmt.Errorf("%w: load alias artifact identity kind: %w", errs.ErrUnavailable, queryErr)
+		}
+		existingRank := artifactIdentityRank(existingKind)
+		newRank := artifactIdentityRank(newKind)
+		switch {
+		case newRank > existingRank:
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE artifact_alias_observations SET artifact_id=?,created_at=? WHERE alias=? AND observed_at=?`, artifactID, created, alias, observed); updateErr != nil {
+				return fmt.Errorf("%w: enrich artifact alias observation: %w", errs.ErrUnavailable, updateErr)
+			}
+			return rebuildArtifactAliasIntervals(ctx, tx, alias)
+		case newRank < existingRank:
+			return nil
+		default:
+			return fmt.Errorf("%w: alias observation changed artifact at the same identity strength and observed_at", errs.ErrConflict)
+		}
+	case err == nil:
+		return nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("%w: find artifact alias observation: %w", errs.ErrUnavailable, err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO artifact_alias_observations(alias,observed_at,artifact_id,created_at) VALUES(?,?,?,?)`, alias, observed, artifactID, created); err != nil {
+		return fmt.Errorf("%w: save artifact alias observation: %w", errs.ErrUnavailable, err)
+	}
+	return rebuildArtifactAliasIntervals(ctx, tx, alias)
+}
+
+type aliasObservation struct {
+	artifactID string
+	observedAt string
+}
+
+func rebuildArtifactAliasIntervals(ctx context.Context, tx *sql.Tx, alias string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT artifact_id,observed_at FROM artifact_alias_observations WHERE alias=? ORDER BY observed_at,artifact_id`, alias)
+	if err != nil {
+		return fmt.Errorf("%w: list artifact alias observations: %w", errs.ErrUnavailable, err)
+	}
+	var observations []aliasObservation
+	for rows.Next() {
+		var observation aliasObservation
+		if err := rows.Scan(&observation.artifactID, &observation.observedAt); err != nil {
+			rows.Close()
+			return fmt.Errorf("%w: scan artifact alias observation: %w", errs.ErrUnavailable, err)
+		}
+		observations = append(observations, observation)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("%w: iterate artifact alias observations: %w", errs.ErrUnavailable, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("%w: close artifact alias observations: %w", errs.ErrUnavailable, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM artifact_aliases WHERE alias=?`, alias); err != nil {
+		return fmt.Errorf("%w: rebuild artifact alias intervals: %w", errs.ErrUnavailable, err)
+	}
+	for index := 0; index < len(observations); {
+		start := observations[index]
+		next := index + 1
+		for next < len(observations) && observations[next].artifactID == start.artifactID {
+			next++
+		}
+		var validTo any
+		if next < len(observations) {
+			validTo = observations[next].observedAt
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO artifact_aliases(artifact_id,alias,valid_from,valid_to) VALUES(?,?,?,?)`, start.artifactID, alias, start.observedAt, validTo); err != nil {
+			return fmt.Errorf("%w: insert artifact alias interval: %w", errs.ErrUnavailable, err)
+		}
+		index = next
+	}
+	return nil
 }
 
 func ensureRuntime(ctx context.Context, tx *sql.Tx, sourceID, serviceID, artifactID string, item inventory.SnapshotItem, now time.Time) (string, bool, error) {
@@ -214,14 +371,42 @@ func ensureRuntime(ctx context.Context, tx *sql.Tx, sourceID, serviceID, artifac
 		startedValue = formatTime(*item.Runtime.StartedAt)
 		started = startedValue
 	}
-	var id, existingServiceID, existingArtifactID, existingContainerName, existingState, existingHealth, existingReference, existingImageID, existingStarted string
+	var id, existingServiceID, existingArtifactID, existingArtifactKind, existingContainerName, existingState, existingHealth, existingReference, existingImageID, existingImageDigest, existingStarted string
 	var existingRestartCount int64
-	err := tx.QueryRowContext(ctx, `SELECT id,service_id,artifact_id,container_name,state,health,restart_count,image_reference,COALESCE(image_id,''),COALESCE(started_at,'') FROM runtime_instances WHERE source_id=? AND external_id=? AND observed_at=?`, sourceID, item.Runtime.ExternalID, observed).Scan(&id, &existingServiceID, &existingArtifactID, &existingContainerName, &existingState, &existingHealth, &existingRestartCount, &existingReference, &existingImageID, &existingStarted)
+	err := tx.QueryRowContext(ctx, `SELECT r.id,r.service_id,r.artifact_id,a.identity_kind,r.container_name,r.state,r.health,r.restart_count,r.image_reference,COALESCE(r.image_id,''),COALESCE(r.image_digest,''),COALESCE(r.started_at,'') FROM runtime_instances r JOIN artifacts a ON a.id=r.artifact_id WHERE r.source_id=? AND r.external_id=? AND r.observed_at=?`, sourceID, item.Runtime.ExternalID, observed).Scan(&id, &existingServiceID, &existingArtifactID, &existingArtifactKind, &existingContainerName, &existingState, &existingHealth, &existingRestartCount, &existingReference, &existingImageID, &existingImageDigest, &existingStarted)
 	if err == nil {
-		if existingServiceID != serviceID || existingArtifactID != artifactID || existingContainerName != item.Runtime.ContainerName ||
+		if existingServiceID != serviceID || existingContainerName != item.Runtime.ContainerName ||
 			existingState != item.Runtime.State || existingHealth != item.Runtime.Health || existingRestartCount != item.Runtime.RestartCount ||
-			existingReference != item.Runtime.ImageReference || existingImageID != item.Runtime.ImageID || existingStarted != startedValue {
+			existingReference != item.Runtime.ImageReference || existingStarted != startedValue {
 			return "", false, fmt.Errorf("%w: runtime snapshot identity or metadata changed for the same source, external ID, and observed_at", errs.ErrConflict)
+		}
+		chosenArtifactID := existingArtifactID
+		chosenImageDigest := existingImageDigest
+		if existingArtifactID != artifactID {
+			existingRank := artifactIdentityRank(existingArtifactKind)
+			newRank := artifactIdentityRank(item.Artifact.IdentityKind)
+			switch {
+			case newRank > existingRank:
+				chosenArtifactID = artifactID
+				chosenImageDigest = ""
+				if item.Artifact.IdentityKind == "repo_digest" {
+					chosenImageDigest = item.Artifact.Identity
+				}
+			case newRank == existingRank:
+				return "", false, fmt.Errorf("%w: runtime artifact changed at the same identity strength and observed_at", errs.ErrConflict)
+			}
+		}
+		chosenImageID := existingImageID
+		switch {
+		case chosenImageID == "":
+			chosenImageID = item.Runtime.ImageID
+		case item.Runtime.ImageID == "":
+		case chosenImageID != item.Runtime.ImageID:
+			return "", false, fmt.Errorf("%w: runtime image ID changed for the same source, external ID, and observed_at", errs.ErrConflict)
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE runtime_instances SET artifact_id=?,image_id=?,image_digest=?,ingested_at=?,updated_at=? WHERE id=?`, chosenArtifactID, nullString(chosenImageID), nullString(chosenImageDigest), formatTime(now), formatTime(now), id)
+		if err != nil {
+			return "", false, fmt.Errorf("%w: reconcile runtime artifact: %w", errs.ErrUnavailable, err)
 		}
 		return id, false, nil
 	}
@@ -251,41 +436,169 @@ func ensureRuntime(ctx context.Context, tx *sql.Tx, sourceID, serviceID, artifac
 	return id, true, nil
 }
 
-func insertCorrelation(ctx context.Context, tx *sql.Tx, runtimeID, artifactID, commitID string, result correlation.Result, observedAt, now time.Time) error {
-	correlationID, err := identity.NewV7(now)
+func artifactIdentityRank(kind string) int {
+	switch kind {
+	case "repo_digest":
+		return 3
+	case "image_id":
+		return 2
+	case "mutable_tag":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func reconcileCorrelation(ctx context.Context, tx *sql.Tx, runtimeID, artifactID, commitID, artifactIdentity, commitSHA string, result correlation.Result, observedAt, now time.Time) error {
+	result = canonicalCorrelationResult(result)
+	if result.Algorithm == "" {
+		result.Algorithm = correlation.AlgorithmVersion
+	}
+	fingerprint, err := correlationFingerprint(artifactIdentity, commitSHA, result)
 	if err != nil {
 		return err
 	}
+	var correlationID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM correlations WHERE runtime_id=? AND algorithm_version=? AND derivation_fingerprint=?`, runtimeID, result.Algorithm, fingerprint).Scan(&correlationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		correlationID, err = insertCorrelationDerivation(ctx, tx, runtimeID, artifactID, commitID, fingerprint, result, observedAt, now)
+	}
+	if err != nil {
+		if errors.Is(err, errs.ErrInvalid) {
+			return err
+		}
+		return fmt.Errorf("%w: reconcile correlation derivation: %w", errs.ErrUnavailable, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE correlations SET is_current=0,updated_at=? WHERE runtime_id=? AND algorithm_version=? AND is_current=1`, formatTime(now), runtimeID, result.Algorithm); err != nil {
+		return fmt.Errorf("%w: clear current correlation: %w", errs.ErrUnavailable, err)
+	}
+	var currentID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM correlations WHERE runtime_id=? AND algorithm_version=? ORDER BY derivation_priority DESC,derivation_fingerprint ASC LIMIT 1`, runtimeID, result.Algorithm).Scan(&currentID); err != nil {
+		return fmt.Errorf("%w: select current correlation: %w", errs.ErrUnavailable, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE correlations SET is_current=1,updated_at=? WHERE id=?`, formatTime(now), currentID); err != nil {
+		return fmt.Errorf("%w: set current correlation: %w", errs.ErrUnavailable, err)
+	}
+	return nil
+}
+
+func insertCorrelationDerivation(ctx context.Context, tx *sql.Tx, runtimeID, artifactID, commitID, fingerprint string, result correlation.Result, observedAt, now time.Time) (string, error) {
+	correlationID, err := identity.NewV7(now)
+	if err != nil {
+		return "", err
+	}
 	missing, err := json.Marshal(result.Missing)
 	if err != nil {
-		return fmt.Errorf("encode missing data: %w", err)
+		return "", fmt.Errorf("encode missing data: %w", err)
 	}
 	warnings, err := json.Marshal(result.Warnings)
 	if err != nil {
-		return fmt.Errorf("encode correlation warnings: %w", err)
+		return "", fmt.Errorf("encode correlation warnings: %w", err)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO correlations(id,runtime_id,artifact_id,commit_id,relation_type,score,level,algorithm_version,conclusion,missing_json,warnings_json,observed_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, correlationID, runtimeID, artifactID, nullString(commitID), result.RelationType, result.Score, result.Level, result.Algorithm, result.Conclusion, string(missing), string(warnings), formatTime(observedAt), formatTime(now), formatTime(now))
+	scoreComponents, err := json.Marshal(result.ScoreComponents)
 	if err != nil {
-		return fmt.Errorf("%w: save correlation: %w", errs.ErrUnavailable, err)
+		return "", fmt.Errorf("encode score components: %w", err)
+	}
+	hardCaps, err := json.Marshal(result.HardCaps)
+	if err != nil {
+		return "", fmt.Errorf("encode hard caps: %w", err)
+	}
+	resolutionAttempts, err := json.Marshal(result.ResolutionAttempts)
+	if err != nil {
+		return "", fmt.Errorf("encode resolution attempts: %w", err)
+	}
+	sourceFreshness, err := json.Marshal(result.SourceFreshness)
+	if err != nil {
+		return "", fmt.Errorf("encode source freshness: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO correlations(
+		id,runtime_id,artifact_id,commit_id,relation_type,score,level,algorithm_version,
+		derivation_fingerprint,derivation_priority,is_current,conclusion,missing_json,warnings_json,
+		score_components_json,hard_caps_json,resolution_attempts_json,source_freshness_json,
+		observed_at,created_at,updated_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`,
+		correlationID, runtimeID, artifactID, nullString(commitID), result.RelationType, result.Score, result.Level, result.Algorithm,
+		fingerprint, correlation.DerivationPriority(result), result.Conclusion, string(missing), string(warnings),
+		string(scoreComponents), string(hardCaps), string(resolutionAttempts), string(sourceFreshness),
+		formatTime(observedAt), formatTime(now), formatTime(now))
+	if err != nil {
+		return "", fmt.Errorf("save correlation: %w", err)
 	}
 	for ordinal, evidence := range result.Evidence {
 		evidenceID, idErr := identity.NewV7(now)
 		if idErr != nil {
-			return idErr
+			return "", idErr
 		}
 		details, marshalErr := json.Marshal(evidence.Details)
 		if marshalErr != nil {
-			return fmt.Errorf("encode evidence details: %w", marshalErr)
+			return "", fmt.Errorf("encode evidence details: %w", marshalErr)
 		}
 		if len(details) > 4096 {
-			return fmt.Errorf("%w: evidence details exceed limit", errs.ErrInvalid)
+			return "", fmt.Errorf("%w: evidence details exceed limit", errs.ErrInvalid)
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO evidence(id,correlation_id,kind,subject,claim,polarity,strength,source,observed_at,details_json,ordinal,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, evidenceID, correlationID, evidence.Kind, evidence.Subject, evidence.Claim, evidence.Polarity, evidence.Strength, evidence.Source, formatTime(evidence.ObservedAt), string(details), ordinal, formatTime(now))
 		if err != nil {
-			return fmt.Errorf("%w: save evidence: %w", errs.ErrUnavailable, err)
+			return "", fmt.Errorf("save evidence: %w", err)
 		}
 	}
-	return nil
+	return correlationID, nil
+}
+
+func correlationFingerprint(artifactIdentity, commitSHA string, result correlation.Result) (string, error) {
+	payload := struct {
+		ArtifactIdentity string
+		CommitSHA        string
+		Result           correlation.Result
+	}{ArtifactIdentity: artifactIdentity, CommitSHA: commitSHA, Result: result}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode correlation fingerprint: %w", err)
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalCorrelationResult(result correlation.Result) correlation.Result {
+	result.Missing = append([]string{}, result.Missing...)
+	result.Warnings = append([]string{}, result.Warnings...)
+	result.Evidence = append([]correlation.Evidence{}, result.Evidence...)
+	result.ScoreComponents = append([]correlation.ScoreComponent{}, result.ScoreComponents...)
+	result.HardCaps = append([]correlation.HardCap{}, result.HardCaps...)
+	result.ResolutionAttempts = append([]correlation.ResolutionAttempt{}, result.ResolutionAttempts...)
+	result.SourceFreshness = append([]correlation.SourceFreshness{}, result.SourceFreshness...)
+	for index := range result.Evidence {
+		result.Evidence[index].ObservedAt = result.Evidence[index].ObservedAt.UTC()
+		if result.Evidence[index].Details == nil {
+			result.Evidence[index].Details = map[string]string{}
+		}
+	}
+	for index := range result.ResolutionAttempts {
+		result.ResolutionAttempts[index].ObservedAt = result.ResolutionAttempts[index].ObservedAt.UTC()
+	}
+	for index := range result.SourceFreshness {
+		result.SourceFreshness[index].ObservedAt = result.SourceFreshness[index].ObservedAt.UTC()
+	}
+	sort.Strings(result.Missing)
+	sort.Strings(result.Warnings)
+	sort.Slice(result.ScoreComponents, func(i, j int) bool { return result.ScoreComponents[i].Name < result.ScoreComponents[j].Name })
+	sort.Slice(result.HardCaps, func(i, j int) bool { return result.HardCaps[i].Name < result.HardCaps[j].Name })
+	sort.Slice(result.ResolutionAttempts, func(i, j int) bool {
+		left, right := result.ResolutionAttempts[i], result.ResolutionAttempts[j]
+		return fmt.Sprintf("%s\x00%s\x00%s\x00%s", left.State, left.Source, left.Revision, formatTime(left.ObservedAt)) < fmt.Sprintf("%s\x00%s\x00%s\x00%s", right.State, right.Source, right.Revision, formatTime(right.ObservedAt))
+	})
+	sort.Slice(result.SourceFreshness, func(i, j int) bool {
+		left, right := result.SourceFreshness[i], result.SourceFreshness[j]
+		return left.Source < right.Source || left.Source == right.Source && left.ObservedAt.Before(right.ObservedAt)
+	})
+	sort.Slice(result.Evidence, func(i, j int) bool {
+		return evidenceSortKey(result.Evidence[i]) < evidenceSortKey(result.Evidence[j])
+	})
+	return result
+}
+
+func evidenceSortKey(evidence correlation.Evidence) string {
+	details, _ := json.Marshal(evidence.Details)
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%020.12f\x00%s\x00%s\x00%s", evidence.Kind, evidence.Subject, evidence.Claim, evidence.Polarity, evidence.Strength, evidence.Source, formatTime(evidence.ObservedAt), details)
 }
 
 func (s *Store) Status(ctx context.Context) (inventory.Status, error) {
@@ -311,7 +624,7 @@ func (s *Store) Status(ctx context.Context) (inventory.Status, error) {
 }
 
 func (s *Store) Services(ctx context.Context) ([]inventory.ServiceRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.logical_key,s.environment,s.display_name,COUNT(r.id),CASE WHEN COUNT(DISTINCT r.state)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.state)=1 THEN MIN(r.state) ELSE 'mixed' END,CASE WHEN COUNT(DISTINCT r.health)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.health)=1 THEN MIN(r.health) ELSE 'mixed' END,CASE WHEN COUNT(DISTINCT a.identity)=1 THEN MIN(a.identity) ELSE '' END,COALESCE(MIN(CASE c.level WHEN 'UNKNOWN' THEN 0 WHEN 'LOW' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'HIGH' THEN 3 WHEN 'EXACT' THEN 4 ELSE 0 END),0),s.last_seen_at FROM services s LEFT JOIN runtime_instances r ON r.service_id=s.id AND r.valid_to IS NULL LEFT JOIN artifacts a ON a.id=r.artifact_id LEFT JOIN correlations c ON c.runtime_id=r.id GROUP BY s.id ORDER BY s.environment,s.logical_key`)
+	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.logical_key,s.environment,s.display_name,COUNT(r.id),CASE WHEN COUNT(DISTINCT r.state)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.state)=1 THEN MIN(r.state) ELSE 'mixed' END,CASE WHEN COUNT(DISTINCT r.health)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.health)=1 THEN MIN(r.health) ELSE 'mixed' END,CASE WHEN COUNT(DISTINCT a.identity)=1 THEN MIN(a.identity) ELSE '' END,COALESCE(MIN(CASE c.level WHEN 'UNKNOWN' THEN 0 WHEN 'LOW' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'HIGH' THEN 3 WHEN 'EXACT' THEN 4 ELSE 0 END),0),s.last_seen_at FROM services s LEFT JOIN runtime_instances r ON r.service_id=s.id AND r.valid_to IS NULL LEFT JOIN artifacts a ON a.id=r.artifact_id LEFT JOIN correlations c ON c.runtime_id=r.id AND c.is_current=1 AND c.algorithm_version=? GROUP BY s.id ORDER BY s.environment,s.logical_key`, correlation.AlgorithmVersion)
 	if err != nil {
 		return nil, fmt.Errorf("%w: list services: %w", errs.ErrUnavailable, err)
 	}
@@ -357,7 +670,7 @@ func (s *Store) Runtime(ctx context.Context, query inventory.RuntimeQuery) ([]in
 	if err != nil {
 		return nil, "", err
 	}
-	args := []any{formatTime(query.At)}
+	args := []any{correlation.AlgorithmVersion, formatTime(query.At)}
 	where := `r.valid_from<=? AND (r.valid_to IS NULL OR r.valid_to>?)`
 	args = append(args, formatTime(query.At))
 	if query.Service != "" {
@@ -369,7 +682,7 @@ func (s *Store) Runtime(ctx context.Context, query inventory.RuntimeQuery) ([]in
 		args = append(args, query.Environment)
 	}
 	args = append(args, query.Limit+1, offset)
-	statement := `SELECT r.id,r.external_id,r.container_name,s.id,s.logical_key,s.environment,r.runtime_kind,r.state,r.health,r.restart_count,r.started_at,r.observed_at,r.image_reference,COALESCE(r.image_id,''),COALESCE(r.image_digest,''),a.id,a.identity,COALESCE(cm.id,''),COALESCE(cm.sha,''),c.id,c.level,c.score FROM runtime_instances r JOIN services s ON s.id=r.service_id JOIN artifacts a ON a.id=r.artifact_id JOIN correlations c ON c.runtime_id=r.id LEFT JOIN commits cm ON cm.id=c.commit_id WHERE ` + where + ` ORDER BY s.environment,s.logical_key,r.external_id,r.observed_at DESC LIMIT ? OFFSET ?`
+	statement := `SELECT r.id,r.external_id,r.container_name,s.id,s.logical_key,s.environment,r.runtime_kind,r.state,r.health,r.restart_count,r.started_at,r.observed_at,r.image_reference,COALESCE(r.image_id,''),COALESCE(r.image_digest,''),a.id,a.identity,COALESCE(cm.id,''),COALESCE(cm.sha,''),c.id,c.level,c.score FROM runtime_instances r JOIN services s ON s.id=r.service_id JOIN artifacts a ON a.id=r.artifact_id JOIN correlations c ON c.runtime_id=r.id AND c.is_current=1 AND c.algorithm_version=? LEFT JOIN commits cm ON cm.id=c.commit_id WHERE ` + where + ` ORDER BY s.environment,s.logical_key,r.external_id,r.observed_at DESC LIMIT ? OFFSET ?`
 	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: query runtime: %w", errs.ErrUnavailable, err)
@@ -402,35 +715,48 @@ func (s *Store) Runtime(ctx context.Context, query inventory.RuntimeQuery) ([]in
 	if err := rows.Close(); err != nil {
 		return nil, "", err
 	}
-	for index := range result {
-		result[index].EvidenceIDs, err = s.evidenceIDs(ctx, result[index].CorrelationID)
-		if err != nil {
-			return nil, "", err
-		}
-	}
 	next := ""
 	if len(result) > query.Limit {
 		result = result[:query.Limit]
 		next = encodeCursor(query, offset+query.Limit)
 	}
+	evidenceByCorrelation, err := s.evidenceIDs(ctx, result)
+	if err != nil {
+		return nil, "", err
+	}
+	for index := range result {
+		result[index].EvidenceIDs = evidenceByCorrelation[result[index].CorrelationID]
+	}
 	return result, next, nil
 }
 
-func (s *Store) evidenceIDs(ctx context.Context, correlationID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM evidence WHERE correlation_id=? ORDER BY polarity, strength DESC, ordinal`, correlationID)
+func (s *Store) evidenceIDs(ctx context.Context, records []inventory.RuntimeRecord) (map[string][]string, error) {
+	if s.evidenceBatchObserver != nil {
+		s.evidenceBatchObserver(len(records))
+	}
+	result := make(map[string][]string, len(records))
+	if len(records) == 0 {
+		return result, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(records)), ",")
+	args := make([]any, 0, len(records))
+	for _, record := range records {
+		args = append(args, record.CorrelationID)
+		result[record.CorrelationID] = nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT correlation_id,id FROM evidence WHERE correlation_id IN (`+placeholders+`) ORDER BY correlation_id,polarity,strength DESC,ordinal`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: list evidence IDs: %w", errs.ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: list evidence IDs in batch: %w", errs.ErrUnavailable, err)
 	}
 	defer rows.Close()
-	var ids []string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var correlationID, id string
+		if err := rows.Scan(&correlationID, &id); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		result[correlationID] = append(result[correlationID], id)
 	}
-	return ids, rows.Err()
+	return result, rows.Err()
 }
 
 func (s *Store) Explain(ctx context.Context, selector string) (inventory.Explanation, error) {
@@ -451,8 +777,8 @@ func (s *Store) explainAt(ctx context.Context, selector string, at *time.Time) (
 	if selector == "" {
 		return inventory.Explanation{}, fmt.Errorf("%w: explain selector is required", errs.ErrInvalid)
 	}
-	statement := `SELECT DISTINCT c.id FROM correlations c JOIN runtime_instances r ON r.id=c.runtime_id JOIN artifacts a ON a.id=c.artifact_id LEFT JOIN commits cm ON cm.id=c.commit_id WHERE (c.id=? OR r.id=? OR r.external_id=? OR r.container_name=? OR a.id=? OR cm.id=? OR cm.sha=?)`
-	args := []any{selector, selector, selector, selector, selector, selector, strings.ToLower(selector)}
+	statement := `SELECT DISTINCT c.id FROM correlations c JOIN runtime_instances r ON r.id=c.runtime_id JOIN artifacts a ON a.id=c.artifact_id LEFT JOIN commits cm ON cm.id=c.commit_id WHERE c.is_current=1 AND c.algorithm_version=? AND (c.id=? OR r.id=? OR r.external_id=? OR r.container_name=? OR a.id=? OR cm.id=? OR cm.sha=?)`
+	args := []any{correlation.AlgorithmVersion, selector, selector, selector, selector, selector, selector, strings.ToLower(selector)}
 	if at != nil {
 		statement += ` AND r.valid_from<=? AND (r.valid_to IS NULL OR r.valid_to>?)`
 		args = append(args, formatTime(*at), formatTime(*at))
@@ -471,17 +797,27 @@ func (s *Store) explainAt(ctx context.Context, selector string, at *time.Time) (
 		}
 		ids = append(ids, id)
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return inventory.Explanation{}, fmt.Errorf("%w: iterate explanation selector: %w", errs.ErrUnavailable, err)
+	}
+	if err := rows.Close(); err != nil {
+		return inventory.Explanation{}, fmt.Errorf("%w: close explanation selector: %w", errs.ErrUnavailable, err)
+	}
 	if len(ids) == 0 {
 		return inventory.Explanation{}, fmt.Errorf("%w: selector %q", errs.ErrNotFound, selector)
 	}
 	if len(ids) > 1 {
-		return inventory.Explanation{}, fmt.Errorf("%w: selector %q matches %d correlations", errs.ErrConflict, selector, len(ids))
+		candidates := make([]inventory.SelectorCandidate, 0, len(ids))
+		for _, id := range ids {
+			candidates = append(candidates, inventory.SelectorCandidate{ID: id, Type: "correlation", DisplayLabel: "correlation " + id})
+		}
+		return inventory.Explanation{}, inventory.NewAmbiguousSelectorError(selector, candidates)
 	}
 	var result inventory.Explanation
-	var missing, warnings, observed string
+	var missing, warnings, scoreComponents, hardCaps, resolutionAttempts, sourceFreshness, observed string
 	var runtimeID, artifactID, commitID, commitSHA string
-	err = s.db.QueryRowContext(ctx, `SELECT c.id,c.conclusion,c.relation_type,c.level,c.score,c.algorithm_version,c.missing_json,c.warnings_json,c.observed_at,r.id,a.id,COALESCE(cm.id,''),COALESCE(cm.sha,'') FROM correlations c JOIN runtime_instances r ON r.id=c.runtime_id JOIN artifacts a ON a.id=c.artifact_id LEFT JOIN commits cm ON cm.id=c.commit_id WHERE c.id=?`, ids[0]).Scan(&result.TargetID, &result.Conclusion, &result.RelationType, &result.Confidence, &result.Score, &result.Algorithm, &missing, &warnings, &observed, &runtimeID, &artifactID, &commitID, &commitSHA)
+	err = s.db.QueryRowContext(ctx, `SELECT c.id,c.conclusion,c.relation_type,c.level,c.score,c.algorithm_version,c.missing_json,c.warnings_json,c.score_components_json,c.hard_caps_json,c.resolution_attempts_json,c.source_freshness_json,c.observed_at,r.id,a.id,COALESCE(cm.id,''),COALESCE(cm.sha,'') FROM correlations c JOIN runtime_instances r ON r.id=c.runtime_id JOIN artifacts a ON a.id=c.artifact_id LEFT JOIN commits cm ON cm.id=c.commit_id WHERE c.id=? AND c.is_current=1 AND c.algorithm_version=?`, ids[0], correlation.AlgorithmVersion).Scan(&result.TargetID, &result.Conclusion, &result.RelationType, &result.Confidence, &result.Score, &result.Algorithm, &missing, &warnings, &scoreComponents, &hardCaps, &resolutionAttempts, &sourceFreshness, &observed, &runtimeID, &artifactID, &commitID, &commitSHA)
 	if err != nil {
 		return result, fmt.Errorf("%w: load explanation: %w", errs.ErrUnavailable, err)
 	}
@@ -496,6 +832,18 @@ func (s *Store) explainAt(ctx context.Context, selector string, at *time.Time) (
 	}
 	if err := json.Unmarshal([]byte(warnings), &result.Warnings); err != nil {
 		return result, fmt.Errorf("%w: decode explanation warnings: %w", errs.ErrIncompatible, err)
+	}
+	if err := json.Unmarshal([]byte(scoreComponents), &result.ScoreComponents); err != nil {
+		return result, fmt.Errorf("%w: decode explanation score components: %w", errs.ErrIncompatible, err)
+	}
+	if err := json.Unmarshal([]byte(hardCaps), &result.HardCaps); err != nil {
+		return result, fmt.Errorf("%w: decode explanation hard caps: %w", errs.ErrIncompatible, err)
+	}
+	if err := json.Unmarshal([]byte(resolutionAttempts), &result.ResolutionAttempts); err != nil {
+		return result, fmt.Errorf("%w: decode explanation resolution attempts: %w", errs.ErrIncompatible, err)
+	}
+	if err := json.Unmarshal([]byte(sourceFreshness), &result.SourceFreshness); err != nil {
+		return result, fmt.Errorf("%w: decode explanation source freshness: %w", errs.ErrIncompatible, err)
 	}
 	result.ObservedAt, err = parseTime(observed)
 	if err != nil {
@@ -522,20 +870,23 @@ func (s *Store) explainAt(ctx context.Context, selector string, at *time.Time) (
 }
 
 func (s *Store) loadEvidence(ctx context.Context, correlationID string, result *inventory.Explanation) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,subject,claim,polarity,strength,source,observed_at FROM evidence WHERE correlation_id=? ORDER BY polarity,strength DESC,ordinal`, correlationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,subject,claim,polarity,strength,source,observed_at,details_json FROM evidence WHERE correlation_id=? ORDER BY polarity,strength DESC,ordinal`, correlationID)
 	if err != nil {
 		return fmt.Errorf("%w: load evidence: %w", errs.ErrUnavailable, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var evidence inventory.PersistedEvidence
-		var observed string
-		if err := rows.Scan(&evidence.ID, &evidence.Kind, &evidence.Subject, &evidence.Claim, &evidence.Polarity, &evidence.Strength, &evidence.Source, &observed); err != nil {
+		var observed, details string
+		if err := rows.Scan(&evidence.ID, &evidence.Kind, &evidence.Subject, &evidence.Claim, &evidence.Polarity, &evidence.Strength, &evidence.Source, &observed, &details); err != nil {
 			return err
 		}
 		evidence.ObservedAt, err = parseTime(observed)
 		if err != nil {
 			return err
+		}
+		if err := json.Unmarshal([]byte(details), &evidence.Details); err != nil {
+			return fmt.Errorf("%w: decode evidence details: %w", errs.ErrIncompatible, err)
 		}
 		switch evidence.Polarity {
 		case correlation.PolaritySupports:
