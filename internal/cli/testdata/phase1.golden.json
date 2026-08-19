@@ -1,185 +1,157 @@
 {
-  "runtime_refresh": {
-    "schema_version": "1.0",
-    "generated_at": "2026-08-19T12:00:00Z",
-    "command": "runtime",
-    "data": {
-      "at": "2026-08-19T12:00:00Z",
-      "items": [
-        {
-          "id": "<uuid>",
-          "external_id": "container-exact",
-          "container_name": "api-1",
-          "service_id": "<uuid>",
-          "service": "api",
-          "environment": "default",
-          "runtime_kind": "docker_container",
-          "state": "running",
-          "health": "healthy",
-          "restart_count": 0,
-          "started_at": null,
-          "observed_at": "2026-08-19T12:00:00Z",
-          "image_reference": "registry.example.invalid/api:v1",
-          "image_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "image_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "artifact_id": "<uuid>",
-          "artifact_identity": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "commit_id": "<uuid>",
-          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "correlation_id": "<uuid>",
-          "confidence": "EXACT",
-          "score": 1,
-          "evidence_ids": ["<uuid>", "<uuid>", "<uuid>"]
-        }
-      ],
-      "refresh": {
-        "operation_id": "<operation-id>",
-        "observed_at": "2026-08-19T12:00:00Z",
-        "processed": 1,
-        "rejected": 0,
-        "services": 1,
-        "runtime_instances": 1
-      }
-    },
-    "warnings": [],
-    "pagination": {"limit": 100, "next_cursor": null}
-  },
-  "status": {
-    "schema_version": "1.0",
-    "generated_at": "2026-08-19T12:00:00Z",
-    "command": "status",
-    "data": {
-      "config": {"status": "pass", "message": "Configuration schema 1.0 is supported"},
-      "database": {"status": "pass", "message": "SQLite database opened"},
-      "migrations": {"status": "pass", "message": "Migration version 2 of 2"},
-      "git": {"status": "warning", "message": "git is not installed"},
-      "docker": {"status": "warning", "message": "docker is not installed"},
-      "last_runtime_snapshot": "2026-08-19T12:00:00Z",
-      "services": 1,
-      "runtime_instances": 1
-    },
-    "warnings": ["git is not installed", "docker is not installed"],
-    "pagination": null
-  },
-  "services": {
-    "schema_version": "1.0",
-    "generated_at": "2026-08-19T12:00:00Z",
-    "command": "services",
-    "data": {
-      "items": [
-        {
-          "id": "<uuid>",
-          "logical_key": "api",
-          "environment": "default",
-          "display_name": "api",
-          "runtime_instances": 1,
-          "state": "running",
-          "health": "healthy",
-          "artifact": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "commit_confidence": "EXACT",
-          "freshness": "2026-08-19T12:00:00Z"
-        }
-      ]
-    },
-    "warnings": [],
-    "pagination": null
-  },
   "runtime": {
-    "schema_version": "1.0",
-    "generated_at": "2026-08-19T12:00:00Z",
     "command": "runtime",
     "data": {
       "at": "2026-08-19T12:00:00Z",
       "items": [
         {
-          "id": "<uuid>",
-          "external_id": "container-exact",
-          "container_name": "api-1",
-          "service_id": "<uuid>",
-          "service": "api",
-          "environment": "default",
-          "runtime_kind": "docker_container",
-          "state": "running",
-          "health": "healthy",
-          "restart_count": 0,
-          "started_at": null,
-          "observed_at": "2026-08-19T12:00:00Z",
-          "image_reference": "registry.example.invalid/api:v1",
-          "image_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "image_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "artifact_id": "<uuid>",
+          "artifact_id": "\u003cuuid\u003e",
           "artifact_identity": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "commit_id": "<uuid>",
+          "commit_id": "\u003cuuid\u003e",
           "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "correlation_id": "<uuid>",
           "confidence": "EXACT",
+          "container_name": "api-1",
+          "correlation_id": "\u003cuuid\u003e",
+          "environment": "default",
+          "evidence_ids": [
+            "\u003cuuid\u003e",
+            "\u003cuuid\u003e",
+            "\u003cuuid\u003e"
+          ],
+          "external_id": "container-exact",
+          "health": "healthy",
+          "id": "\u003cuuid\u003e",
+          "image_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "image_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "image_reference": "registry.example.invalid/api:v1",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "restart_count": 0,
+          "runtime_kind": "docker_container",
           "score": 1,
-          "evidence_ids": ["<uuid>", "<uuid>", "<uuid>"]
+          "service": "api",
+          "service_id": "\u003cuuid\u003e",
+          "started_at": null,
+          "state": "running"
         }
       ],
       "refresh": null
     },
-    "warnings": [],
-    "pagination": {"limit": 100, "next_cursor": null}
-  },
-  "explain": {
-    "schema_version": "1.0",
     "generated_at": "2026-08-19T12:00:00Z",
-    "command": "explain",
+    "pagination": {
+      "limit": 100,
+      "next_cursor": null
+    },
+    "schema_version": "1.0",
+    "warnings": []
+  },
+  "runtime_refresh": {
+    "command": "runtime",
     "data": {
-      "target_id": "<uuid>",
-      "target_type": "correlation",
-      "conclusion": "The running immutable image maps exactly to commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
-      "relation_type": "exact",
-      "confidence": "EXACT",
-      "score": 1,
-      "algorithm": "provenance/v0-experimental",
-      "entities": {
-        "runtime": "<uuid>",
-        "artifact": "<uuid>",
-        "commit": "<uuid>",
-        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      },
-      "supporting_evidence": [
+      "at": "2026-08-19T12:00:00Z",
+      "items": [
         {
-          "id": "<uuid>",
-          "kind": "identity",
-          "subject": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-          "claim": "The running container uses immutable image identity sha256:1111111111111111111111111111111111111111111111111111111111111111.",
-          "polarity": "supports",
-          "strength": 1,
-          "source": "docker",
-          "observed_at": "2026-08-19T12:00:00Z"
-        },
-        {
-          "id": "<uuid>",
-          "kind": "identity",
-          "subject": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "claim": "OCI revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa resolves unambiguously to commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
-          "polarity": "supports",
-          "strength": 1,
-          "source": "git",
-          "observed_at": "2026-08-19T12:00:00Z"
-        },
-        {
-          "id": "<uuid>",
-          "kind": "identity",
-          "subject": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "claim": "The image declares OCI revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
-          "polarity": "supports",
-          "strength": 0.7,
-          "source": "docker",
-          "observed_at": "2026-08-19T12:00:00Z"
+          "artifact_id": "\u003cuuid\u003e",
+          "artifact_identity": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "commit_id": "\u003cuuid\u003e",
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "confidence": "EXACT",
+          "container_name": "api-1",
+          "correlation_id": "\u003cuuid\u003e",
+          "environment": "default",
+          "evidence_ids": [
+            "\u003cuuid\u003e",
+            "\u003cuuid\u003e",
+            "\u003cuuid\u003e"
+          ],
+          "external_id": "container-exact",
+          "health": "healthy",
+          "id": "\u003cuuid\u003e",
+          "image_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "image_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "image_reference": "registry.example.invalid/api:v1",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "restart_count": 0,
+          "runtime_kind": "docker_container",
+          "score": 1,
+          "service": "api",
+          "service_id": "\u003cuuid\u003e",
+          "started_at": null,
+          "state": "running"
         }
       ],
-      "contradicting_evidence": [],
-      "neutral_evidence": [],
-      "missing": [],
-      "sources": ["docker", "git"],
-      "freshness": "2026-08-19T12:00:00Z",
-      "limitations": ["This is a provenance correlation, not proof of causality."]
+      "refresh": {
+        "observed_at": "2026-08-19T12:00:00Z",
+        "operation_id": "\u003coperation-id\u003e",
+        "processed": 1,
+        "rejected": 0,
+        "runtime_instances": 1,
+        "services": 1
+      }
     },
-    "warnings": [],
-    "pagination": null
+    "generated_at": "2026-08-19T12:00:00Z",
+    "pagination": {
+      "limit": 100,
+      "next_cursor": null
+    },
+    "schema_version": "1.0",
+    "warnings": []
+  },
+  "services": {
+    "command": "services",
+    "data": {
+      "items": [
+        {
+          "artifact": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "commit_confidence": "EXACT",
+          "display_name": "api",
+          "environment": "default",
+          "freshness": "2026-08-19T12:00:00Z",
+          "health": "healthy",
+          "id": "\u003cuuid\u003e",
+          "logical_key": "api",
+          "runtime_instances": 1,
+          "state": "running"
+        }
+      ]
+    },
+    "generated_at": "2026-08-19T12:00:00Z",
+    "pagination": null,
+    "schema_version": "1.0",
+    "warnings": []
+  },
+  "status": {
+    "command": "status",
+    "data": {
+      "config": {
+        "message": "Configuration schema 1.0 is supported",
+        "status": "pass"
+      },
+      "database": {
+        "message": "SQLite database opened",
+        "status": "pass"
+      },
+      "docker": {
+        "message": "docker is not installed",
+        "status": "warning"
+      },
+      "git": {
+        "message": "git is not installed",
+        "status": "warning"
+      },
+      "last_runtime_snapshot": "2026-08-19T12:00:00Z",
+      "migrations": {
+        "message": "Migration version 2 of 2",
+        "status": "pass"
+      },
+      "runtime_instances": 1,
+      "services": 1
+    },
+    "generated_at": "2026-08-19T12:00:00Z",
+    "pagination": null,
+    "schema_version": "1.0",
+    "warnings": [
+      "git is not installed",
+      "docker is not installed"
+    ]
   }
 }

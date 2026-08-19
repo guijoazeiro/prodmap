@@ -156,7 +156,7 @@ func (a *App) runRuntime(ctx context.Context, args []string) error {
 		}
 	}
 	for _, warning := range warnings {
-		fmt.Fprintf(a.Stdout, "warning: %s\n", warning)
+		fmt.Fprintf(a.Stderr, "warning: %s\n", warning)
 	}
 	if pagination.NextCursor != nil {
 		fmt.Fprintf(a.Stdout, "next cursor: %s\n", *pagination.NextCursor)
