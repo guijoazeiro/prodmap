@@ -24,7 +24,8 @@
           ],
           "oci_labels": {
             "org.opencontainers.image.revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "org.opencontainers.image.source": "https://example.invalid/prodmap",
+            "org.opencontainers.image.source": "https://fixture-user:FIXTURE_SOURCE_SECRET@example.invalid/prodmap?token=FIXTURE_QUERY_SECRET#FIXTURE_FRAGMENT_SECRET",
+            "org.opencontainers.image.version": "FIXTURE_VERSION_TOKEN",
             "org.opencontainers.image.title": "profile",
             "com.example.internal.note": "REDACTED_FIXTURE_VALUE",
             "com.example.secret": "REDACTED_FIXTURE_VALUE"

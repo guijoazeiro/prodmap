@@ -3,23 +3,115 @@
   "command": [
     "prodmap",
     "explain",
-    "<correlation_id>",
+    "\u003ccorrelation_id\u003e",
+    "--detail",
+    "full",
     "--json"
   ],
   "exit_code": 0,
   "stderr": "",
   "stdout": {
-    "target_type": "correlation",
-    "confidence": "EXACT",
-    "score": 1,
-    "relation_type": "exact",
-    "algorithm": "provenance/v0-experimental",
-    "warnings": [],
-    "missing": [],
-    "evidence_kinds": [
-      "identity",
-      "identity",
-      "identity"
-    ]
+    "command": "explain",
+    "data": {
+      "algorithm": "provenance/v0-experimental",
+      "conclusion": "The running immutable image maps exactly to commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+      "confidence": "EXACT",
+      "contradicting_evidence": [],
+      "entities": {
+        "artifact": "\u003cuuid\u003e",
+        "commit": "\u003cuuid\u003e",
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runtime": "\u003cuuid\u003e"
+      },
+      "freshness": "2026-08-19T12:00:00Z",
+      "hard_caps": [],
+      "limitations": [
+        "This is a provenance correlation, not proof of causality."
+      ],
+      "missing": [],
+      "neutral_evidence": [],
+      "relation_type": "exact",
+      "resolution_attempts": [
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source": "git",
+          "state": "resolved"
+        }
+      ],
+      "score": 1,
+      "score_components": [
+        {
+          "description": "The image declares a complete normalized OCI revision.",
+          "name": "declared_oci_revision",
+          "value": 0.7
+        },
+        {
+          "description": "A validated immutable Docker artifact identity is available.",
+          "name": "immutable_artifact_identity",
+          "value": 1
+        },
+        {
+          "description": "The complete OCI revision resolves exactly in the local Git repository.",
+          "name": "local_commit_resolution",
+          "value": 1
+        }
+      ],
+      "source_freshness": [
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "source": "docker"
+        },
+        {
+          "observed_at": "2026-08-19T12:00:00Z",
+          "source": "git"
+        }
+      ],
+      "sources": [
+        "docker",
+        "git"
+      ],
+      "supporting_evidence": [
+        {
+          "claim": "OCI revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa resolves unambiguously to commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "identity",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "supports",
+          "source": "git",
+          "strength": 1,
+          "subject": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "claim": "The running container uses immutable image identity sha256:1111111111111111111111111111111111111111111111111111111111111111.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "identity",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "supports",
+          "source": "docker",
+          "strength": 1,
+          "subject": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        {
+          "claim": "The image declares OCI revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+          "details": {},
+          "id": "\u003cuuid\u003e",
+          "kind": "identity",
+          "observed_at": "2026-08-19T12:00:00Z",
+          "polarity": "supports",
+          "source": "docker",
+          "strength": 0.7,
+          "subject": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "target_id": "\u003cuuid\u003e",
+      "target_type": "correlation"
+    },
+    "generated_at": "\u003cgenerated-at\u003e",
+    "pagination": null,
+    "schema_version": "1.0",
+    "warnings": []
   }
 }
