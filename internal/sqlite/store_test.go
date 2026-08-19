@@ -31,7 +31,7 @@ func TestOpenConfiguresDatabaseAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus() error = %v", err)
 	}
-	if status.AppliedVersion != 1 || status.Available != 1 || !status.Current {
+	if status.AppliedVersion != 2 || status.Available != 2 || !status.Current {
 		t.Fatalf("MigrationStatus() = %+v", status)
 	}
 	if err := store.Close(); err != nil {
@@ -47,8 +47,8 @@ func TestOpenConfiguresDatabaseAndIsIdempotent(t *testing.T) {
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("migration count = %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("migration count = %d, want 2", count)
 	}
 }
 

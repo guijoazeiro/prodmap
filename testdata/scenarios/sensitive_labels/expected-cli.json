@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "command": [
+    "prodmap",
+    "explain",
+    "<correlation_id>",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": {
+    "target_type": "correlation",
+    "confidence": "EXACT",
+    "score": 1,
+    "relation_type": "exact",
+    "algorithm": "provenance/v0-experimental",
+    "warnings": [],
+    "missing": [],
+    "evidence_kinds": [
+      "identity",
+      "identity",
+      "identity"
+    ]
+  }
+}

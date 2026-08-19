@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "command": [
+    "prodmap",
+    "explain",
+    "<correlation_id>",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": {
+    "target_type": "correlation",
+    "confidence": "LOW",
+    "score": 0.35,
+    "relation_type": "inferred",
+    "algorithm": "provenance/v0-experimental",
+    "warnings": [],
+    "missing": [
+      "OCI revision metadata"
+    ],
+    "evidence_kinds": [
+      "identity",
+      "data_quality"
+    ]
+  }
+}

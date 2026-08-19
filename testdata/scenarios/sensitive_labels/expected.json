@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "clock": "2026-08-19T12:00:00Z",
+  "service_key": "profile",
+  "runtime_records": [
+    {
+      "observed_at": "2026-08-19T12:00:00Z",
+      "preserved": true,
+      "latest": true
+    }
+  ],
+  "provenance": {
+    "relation_type": "exact",
+    "level": "EXACT",
+    "score": 1,
+    "warnings": [],
+    "missing": [],
+    "evidence_kinds": [
+      "identity",
+      "identity",
+      "identity"
+    ],
+    "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "persisted_oci_labels": {
+      "org.opencontainers.image.revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "org.opencontainers.image.source": "https://example.invalid/prodmap"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "clock": "2026-08-19T12:00:00Z",
+  "service_key": "gateway",
+  "runtime_records": [
+    {
+      "observed_at": "2026-08-19T12:00:00Z",
+      "preserved": true,
+      "latest": true
+    }
+  ],
+  "provenance": {
+    "relation_type": "inferred",
+    "level": "UNKNOWN",
+    "score": 0,
+    "warnings": [
+      "conflicting immutable image identities"
+    ],
+    "missing": [],
+    "evidence_kinds": [
+      "identity",
+      "contradiction"
+    ],
+    "contradiction": true,
+    "commit_sha": null
+  }
+}

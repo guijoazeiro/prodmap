@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "clock": "2026-08-19T12:00:00Z",
+  "repository": {
+    "external_id": "repo-fixture",
+    "name": "prodmap-fixture",
+    "canonical_url": "https://example.invalid/prodmap-fixture.git",
+    "root_path_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "runtime_batches": [
+    {
+      "arrival_sequence": 1,
+      "observations": [
+        {
+          "external_id": "ctr-labels",
+          "container_name": "profile-1",
+          "image_reference": "registry.example.invalid/prodmap/profile:v1",
+          "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "repo_digests": [
+            "registry.example.invalid/prodmap/profile@sha256:8888888888888888888888888888888888888888888888888888888888888888"
+          ],
+          "repo_tags": [
+            "registry.example.invalid/prodmap/profile:v1"
+          ],
+          "oci_labels": {
+            "org.opencontainers.image.revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "org.opencontainers.image.source": "https://example.invalid/prodmap",
+            "org.opencontainers.image.title": "profile",
+            "com.example.internal.note": "REDACTED_FIXTURE_VALUE",
+            "com.example.secret": "REDACTED_FIXTURE_VALUE"
+          },
+          "state": "running",
+          "health": "healthy",
+          "restart_count": 0,
+          "started_at": "2026-08-19T11:10:00Z",
+          "observed_at": "2026-08-19T12:00:00Z"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commit_time": "2026-08-19T10:50:00Z",
+      "subject": "fixture redaction commit",
+      "tree_sha": "cccccccccccccccccccccccccccccccccccccccc"
+    }
+  ]
+}

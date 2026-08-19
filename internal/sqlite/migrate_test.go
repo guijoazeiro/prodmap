@@ -56,6 +56,44 @@ func TestOpenDetectsMigrationChecksumConflict(t *testing.T) {
 	}
 }
 
+func TestOpenUpgradesFoundationDatabaseAppendOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upgrade.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	foundation, err := embeddedMigrations.ReadFile("migrations/000001_foundation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigrations(context.Background(), db, fstest.MapFS{
+		"migrations/000001_foundation.sql": {Data: foundation},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("upgrade Open() error = %v", err)
+	}
+	defer store.Close()
+	status, err := store.MigrationStatus(context.Background())
+	if err != nil || status.AppliedVersion != 2 || !status.Current {
+		t.Fatalf("upgraded migration status = %+v, err=%v", status, err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runtime_instances'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatal("Phase 1 runtime_instances table was not created during upgrade")
+	}
+}
+
 func TestFailedMigrationRollsBackEntireBatch(t *testing.T) {
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "rollback.db"))
 	if err != nil {

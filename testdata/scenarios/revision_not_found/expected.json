@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "clock": "2026-08-19T12:00:00Z",
+  "service_key": "search",
+  "runtime_records": [
+    {
+      "observed_at": "2026-08-19T12:00:00Z",
+      "preserved": true,
+      "latest": true
+    }
+  ],
+  "provenance": {
+    "relation_type": "inferred",
+    "level": "UNKNOWN",
+    "score": 0,
+    "warnings": [
+      "OCI revision not found in local repository"
+    ],
+    "missing": [
+      "locally resolvable commit"
+    ],
+    "evidence_kinds": [
+      "identity",
+      "identity",
+      "data_quality"
+    ],
+    "commit_sha": null
+  }
+}

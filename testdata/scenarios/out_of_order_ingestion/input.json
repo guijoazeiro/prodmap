@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "clock": "2026-08-19T12:00:00Z",
+  "repository": {
+    "external_id": "repo-fixture",
+    "name": "prodmap-fixture",
+    "canonical_url": "https://example.invalid/prodmap-fixture.git",
+    "root_path_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "runtime_batches": [
+    {
+      "arrival_sequence": 1,
+      "observations": [
+        {
+          "external_id": "ctr-order",
+          "container_name": "orders-1",
+          "image_reference": "registry.example.invalid/prodmap/orders:v2",
+          "image_id": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+          "repo_digests": [
+            "registry.example.invalid/prodmap/orders@sha256:6666666666666666666666666666666666666666666666666666666666666666"
+          ],
+          "repo_tags": [
+            "registry.example.invalid/prodmap/orders:v2"
+          ],
+          "oci_labels": {
+            "org.opencontainers.image.revision": "6666666666666666666666666666666666666666"
+          },
+          "state": "running",
+          "health": "healthy",
+          "restart_count": 0,
+          "started_at": "2026-08-19T11:45:00Z",
+          "observed_at": "2026-08-19T12:00:00Z"
+        }
+      ]
+    },
+    {
+      "arrival_sequence": 2,
+      "observations": [
+        {
+          "external_id": "ctr-order",
+          "container_name": "orders-1",
+          "image_reference": "registry.example.invalid/prodmap/orders:v1",
+          "image_id": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+          "repo_digests": [
+            "registry.example.invalid/prodmap/orders@sha256:7777777777777777777777777777777777777777777777777777777777777777"
+          ],
+          "repo_tags": [
+            "registry.example.invalid/prodmap/orders:v1"
+          ],
+          "oci_labels": {
+            "org.opencontainers.image.revision": "7777777777777777777777777777777777777777"
+          },
+          "state": "running",
+          "health": "healthy",
+          "restart_count": 0,
+          "started_at": "2026-08-19T10:45:00Z",
+          "observed_at": "2026-08-19T11:00:00Z"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "revision": "6666666666666666666666666666666666666666",
+      "sha": "6666666666666666666666666666666666666666",
+      "commit_time": "2026-08-19T11:30:00Z",
+      "subject": "fixture current commit",
+      "tree_sha": "8888888888888888888888888888888888888888"
+    },
+    {
+      "revision": "7777777777777777777777777777777777777777",
+      "sha": "7777777777777777777777777777777777777777",
+      "commit_time": "2026-08-19T10:30:00Z",
+      "subject": "fixture earlier commit",
+      "tree_sha": "9999999999999999999999999999999999999999"
+    }
+  ]
+}
