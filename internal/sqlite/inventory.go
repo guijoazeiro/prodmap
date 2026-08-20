@@ -42,10 +42,11 @@ func (s *Store) saveRuntimeSnapshot(ctx context.Context, snapshot inventory.Snap
 	if snapshot.ObservedAt.IsZero() {
 		return inventory.RefreshResult{}, fmt.Errorf("%w: snapshot observed_at is required", errs.ErrInvalid)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := s.beginTransaction(ctx)
 	if err != nil {
 		return inventory.RefreshResult{}, fmt.Errorf("%w: begin runtime snapshot: %w", errs.ErrUnavailable, err)
 	}
+	defer release()
 	defer tx.Rollback()
 	now := s.clockNow()
 	dockerStatus := "success"
@@ -114,6 +115,10 @@ func (s *Store) saveRuntimeSnapshot(ctx context.Context, snapshot inventory.Snap
 func isSQLiteBusy(err error) bool {
 	if err == nil {
 		return false
+	}
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) && coded.Code()&sqlitePrimaryResultCodeMask == sqliteBusyPrimaryResultCode {
+		return true
 	}
 	message := strings.ToUpper(err.Error())
 	return strings.Contains(message, "SQLITE_BUSY") || strings.Contains(message, "DATABASE IS LOCKED")

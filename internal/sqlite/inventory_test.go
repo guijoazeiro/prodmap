@@ -553,18 +553,62 @@ func TestConcurrentStoresCanIdempotentlySaveSameSnapshot(t *testing.T) {
 			t.Fatalf("concurrent save error: %v", err)
 		}
 	}
-	var runtimes, derivations, evidenceCount int
-	if err := first.db.QueryRow(`SELECT COUNT(*) FROM runtime_instances`).Scan(&runtimes); err != nil {
+	wantCounts := map[string]int{
+		"sources":                     2,
+		"repositories":                1,
+		"commits":                     1,
+		"services":                    1,
+		"artifacts":                   1,
+		"artifact_alias_observations": 1,
+		"artifact_aliases":            1,
+		"runtime_instances":           1,
+		"correlations":                1,
+		"evidence":                    len(snapshot.Items[0].Correlation.Evidence),
+	}
+	for table, want := range wantCounts {
+		var got int
+		if err := first.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got != want {
+			t.Fatalf("%s count after concurrent save = %d, want %d", table, got, want)
+		}
+	}
+	var runtimeID, correlationID string
+	var evidenceCount int
+	if err := first.db.QueryRow(`SELECT r.id,c.id,COUNT(e.id)
+		FROM runtime_instances r
+		JOIN correlations c ON c.runtime_id=r.id
+		JOIN evidence e ON e.correlation_id=c.id
+		GROUP BY r.id,c.id`).Scan(&runtimeID, &correlationID, &evidenceCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.db.QueryRow(`SELECT COUNT(*) FROM correlations`).Scan(&derivations); err != nil {
-		t.Fatal(err)
+	if runtimeID == "" || correlationID == "" || evidenceCount != len(snapshot.Items[0].Correlation.Evidence) {
+		t.Fatalf("idempotent identity chain: runtime=%q correlation=%q evidence=%d", runtimeID, correlationID, evidenceCount)
 	}
-	if err := first.db.QueryRow(`SELECT COUNT(*) FROM evidence`).Scan(&evidenceCount); err != nil {
-		t.Fatal(err)
-	}
-	if runtimes != 1 || derivations != 1 || evidenceCount != len(snapshot.Items[0].Correlation.Evidence) {
-		t.Fatalf("counts after concurrent save: runtimes=%d derivations=%d evidence=%d", runtimes, derivations, evidenceCount)
+}
+
+type sqliteCodeError int
+
+func (e sqliteCodeError) Error() string { return "typed SQLite error" }
+func (e sqliteCodeError) Code() int     { return int(e) }
+
+func TestSQLiteBusyDetectionUsesTypedPrimaryAndExtendedCodes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "primary busy", err: sqliteCodeError(5), want: true},
+		{name: "extended busy snapshot", err: fmt.Errorf("wrapped: %w", sqliteCodeError(5|(2<<8))), want: true},
+		{name: "non-busy typed code", err: sqliteCodeError(6), want: false},
+		{name: "legacy text fallback", err: errors.New("database is locked (SQLITE_BUSY)"), want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isSQLiteBusy(test.err); got != test.want {
+				t.Fatalf("isSQLiteBusy(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
 	}
 }
 
