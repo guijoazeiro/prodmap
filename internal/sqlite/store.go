@@ -4,10 +4,13 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +18,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const busyTimeoutMilliseconds = 5000
+const (
+	busyTimeoutMilliseconds     = 5000
+	sqlitePrimaryResultCodeMask = 0xff
+	sqliteBusyPrimaryResultCode = 5
+)
 
 // Store is a configured SQLite database.
 type Store struct {
@@ -43,7 +50,11 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, classifyOpenError("create database directory", err)
 	}
 
-	db, err := sql.Open("sqlite", path)
+	dsn, err := sqliteDSN(path)
+	if err != nil {
+		return nil, classifyOpenError("construct database connection", err)
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, classifyOpenError("open database", err)
 	}
@@ -78,16 +89,73 @@ func (s *Store) clockNow() time.Time {
 }
 
 func configure(ctx context.Context, db *sql.DB) error {
-	for _, statement := range []string{
-		"PRAGMA foreign_keys = ON",
-		"PRAGMA journal_mode = WAL",
-		fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeoutMilliseconds),
-	} {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			return err
-		}
+	// WAL is persistent database state. Connection-local foreign key enforcement,
+	// busy timeout, and transaction lock mode are configured in sqliteDSN so they
+	// are reapplied whenever database/sql opens a replacement connection.
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
+		return err
 	}
 	return nil
+}
+
+func sqliteDSN(path string) (string, error) {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	uriPath := filepath.ToSlash(absolutePath)
+	if volume := filepath.VolumeName(absolutePath); volume != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	query := url.Values{}
+	query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMilliseconds))
+	query.Set("_foreign_keys", "1")
+	query.Set("_txlock", "immediate")
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
+}
+
+func (s *Store) beginTransaction(ctx context.Context) (*sql.Tx, func(), error) {
+	deadline, hasDeadline := ctx.Deadline()
+	if !hasDeadline {
+		tx, err := s.db.BeginTx(ctx, nil)
+		return tx, func() {}, err
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, func() {}, err
+		}
+		return nil, func() {}, context.DeadlineExceeded
+	}
+	timeoutMilliseconds := int((remaining + time.Millisecond - 1) / time.Millisecond)
+	if timeoutMilliseconds >= busyTimeoutMilliseconds {
+		tx, err := s.db.BeginTx(ctx, nil)
+		return tx, func() {}, err
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	cleanup := func() {
+		if _, resetErr := conn.ExecContext(context.Background(), "PRAGMA busy_timeout = "+strconv.Itoa(busyTimeoutMilliseconds)); resetErr != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+		_ = conn.Close()
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = "+strconv.Itoa(timeoutMilliseconds)); err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		cleanup()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, func() {}, ctxErr
+		}
+		return nil, func() {}, err
+	}
+	return tx, cleanup, nil
 }
 
 func classifyOpenError(operation string, err error) error {

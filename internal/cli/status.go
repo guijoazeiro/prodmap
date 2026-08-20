@@ -27,9 +27,12 @@ type statusResult struct {
 
 func (a *App) runStatus(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
-	flags.SetOutput(a.Stderr)
 	common := addInventoryFlags(flags)
-	if err := flags.Parse(args); err != nil {
+	help, err := a.parseCommandFlags(flags, args)
+	if help {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("parse status flags: %w: %v", errs.ErrInvalid, err)
 	}
 	if flags.NArg() != 0 {

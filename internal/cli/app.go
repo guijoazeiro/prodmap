@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -145,15 +146,34 @@ func safeDisplayLabel(value string) string {
 
 func (a *App) runVersion(args []string) error {
 	flags := flag.NewFlagSet("version", flag.ContinueOnError)
-	flags.SetOutput(a.Stderr)
 	jsonOutput := flags.Bool("json", false, "emit JSON")
-	if err := flags.Parse(args); err != nil {
+	help, err := a.parseCommandFlags(flags, args)
+	if help {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("parse version flags: %w: %v", errs.ErrInvalid, err)
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("version accepts no arguments: %w", errs.ErrInvalid)
 	}
 	return WriteVersion(a.Stdout, a.BuildInfo, *jsonOutput, a.Now())
+}
+
+func (a *App) parseCommandFlags(flags *flag.FlagSet, args []string) (bool, error) {
+	var output bytes.Buffer
+	flags.SetOutput(&output)
+	err := flags.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		if _, writeErr := a.Stdout.Write(output.Bytes()); writeErr != nil {
+			return false, writeErr
+		}
+		return true, nil
+	}
+	if _, writeErr := a.Stderr.Write(output.Bytes()); writeErr != nil {
+		return false, writeErr
+	}
+	return false, err
 }
 
 func (a *App) loadConfig(projectDir, dataDir string) (config.Config, error) {

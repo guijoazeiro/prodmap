@@ -26,12 +26,15 @@ type doctorResult struct {
 
 func (a *App) runDoctor(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	flags.SetOutput(a.Stderr)
 	projectDir := flags.String("project-dir", "", "project directory")
 	dataDir := flags.String("data-dir", "", "database path")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
 	strict := flags.Bool("strict", false, "fail when any check is not pass")
-	if err := flags.Parse(args); err != nil {
+	help, err := a.parseCommandFlags(flags, args)
+	if help {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("parse doctor flags: %w: %v", errs.ErrInvalid, err)
 	}
 	if flags.NArg() != 0 {

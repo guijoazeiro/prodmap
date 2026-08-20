@@ -89,7 +89,6 @@ type explainFullResult struct {
 
 func (a *App) runExplain(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("explain", flag.ContinueOnError)
-	flags.SetOutput(a.Stderr)
 	common := addInventoryFlags(flags)
 	detail := flags.String("detail", "summary", "summary or full")
 	atValue := flags.String("at", "", "resolve against a runtime timestamp in RFC3339")
@@ -99,8 +98,12 @@ func (a *App) runExplain(ctx context.Context, args []string) error {
 		target = args[0]
 		flagArgs = args[1:]
 	}
-	if err := flags.Parse(flagArgs); err != nil {
-		return fmt.Errorf("parse explain flags: %w: %v", errs.ErrInvalid, err)
+	help, parseErr := a.parseCommandFlags(flags, flagArgs)
+	if help {
+		return nil
+	}
+	if parseErr != nil {
+		return fmt.Errorf("parse explain flags: %w: %v", errs.ErrInvalid, parseErr)
 	}
 	if target == "" && flags.NArg() == 1 {
 		target = flags.Arg(0)

@@ -34,7 +34,7 @@ var allowedOCILabels = [...]string{
 // These templates deliberately project only the fields Prodmap needs. In
 // particular, Docker never returns container environment variables, mounts,
 // health-check logs, or the complete image label map to this process.
-const containerInspectTemplate = `{"id":{{json .Id}},"name":{{json .Name}},"image_reference":{{json .Config.Image}},"image_id":{{json .Image}},"state":{{json .State.Status}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}""{{end}},"restart_count":{{json .RestartCount}},"started_at":{{json .State.StartedAt}}}`
+const containerInspectTemplate = `{"id":{{json .Id}},"name":{{json .Name}},"image_reference":{{json .Config.Image}},"image_id":{{json .Image}},"state":{{json .State.Status}},"health":{{with (index .State "Health")}}{{json (index . "Status")}}{{else}}""{{end}},"restart_count":{{json .RestartCount}},"started_at":{{json .State.StartedAt}}}`
 
 const imageInspectTemplate = `{"id":{{json .Id}},"repo_digests":{{json .RepoDigests}},"repo_tags":{{json .RepoTags}},"labels":{"org.opencontainers.image.revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"org.opencontainers.image.source":{{json (index .Config.Labels "org.opencontainers.image.source")}},"org.opencontainers.image.created":{{json (index .Config.Labels "org.opencontainers.image.created")}}}}`
 
@@ -151,6 +151,7 @@ func (s *Source) InspectRuntime(ctx context.Context) (inventory.RuntimeBatch, er
 	}
 
 	batch := inventory.RuntimeBatch{ObservedAt: observedAt, Observations: make([]inventory.RuntimeObservation, 0, len(results))}
+	var firstInspectionFailure error
 	for _, result := range results {
 		if result.disappeared != "" {
 			batch.Rejected++
@@ -158,9 +159,26 @@ func (s *Source) InspectRuntime(ctx context.Context) (inventory.RuntimeBatch, er
 			continue
 		}
 		if result.err != nil {
-			return inventory.RuntimeBatch{}, result.err
+			if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) {
+				return inventory.RuntimeBatch{}, result.err
+			}
+			if errors.Is(result.err, errs.ErrUnavailable) {
+				return inventory.RuntimeBatch{}, result.err
+			}
+			if firstInspectionFailure == nil {
+				firstInspectionFailure = result.err
+			}
+			batch.Rejected++
+			batch.Warnings = append(batch.Warnings, inspectionWarning(result.err))
+			continue
 		}
 		batch.Observations = append(batch.Observations, result.observation)
+	}
+	if len(batch.Observations) == 0 && batch.Rejected > 0 {
+		if firstInspectionFailure != nil {
+			return inventory.RuntimeBatch{}, fmt.Errorf("inspect Docker runtime: all %d listed containers failed inspection: %w", batch.Rejected, firstInspectionFailure)
+		}
+		return inventory.RuntimeBatch{}, fmt.Errorf("inspect Docker runtime: all %d listed containers disappeared during inspection", batch.Rejected)
 	}
 	return batch, nil
 }
@@ -177,18 +195,18 @@ func inspectOne(ctx context.Context, runner commandRunner, containerID string, o
 		if isUnavailable(err) {
 			return inventory.RuntimeObservation{}, "", fmt.Errorf("%w: inspect Docker container: %w", errs.ErrUnavailable, err)
 		}
-		return inventory.RuntimeObservation{}, "", fmt.Errorf("inspect Docker container: %w", err)
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "container", cause: err}
 	}
 
 	var container containerView
 	if err := decodeProjection(stdout, &container); err != nil {
-		return inventory.RuntimeObservation{}, "", fmt.Errorf("decode Docker container inspection: %w", err)
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "container", cause: err}
 	}
 	if container.ID == "" || container.ImageID == "" {
-		return inventory.RuntimeObservation{}, "", errors.New("decode Docker container inspection: required immutable identity is missing")
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "container", cause: errors.New("required immutable identity is missing")}
 	}
 	if !strings.EqualFold(container.ID, containerID) {
-		return inventory.RuntimeObservation{}, "", errors.New("Docker container inspection returned an unexpected immutable identity")
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "container", cause: errors.New("unexpected immutable identity")}
 	}
 
 	stdout, err = runner.Run(ctx, "image", "inspect", "--format", imageInspectTemplate, container.ImageID)
@@ -202,23 +220,23 @@ func inspectOne(ctx context.Context, runner commandRunner, containerID string, o
 		if isUnavailable(err) {
 			return inventory.RuntimeObservation{}, "", fmt.Errorf("%w: inspect Docker image: %w", errs.ErrUnavailable, err)
 		}
-		return inventory.RuntimeObservation{}, "", fmt.Errorf("inspect Docker image: %w", err)
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "image", cause: err}
 	}
 
 	var image imageView
 	if err := decodeProjection(stdout, &image); err != nil {
-		return inventory.RuntimeObservation{}, "", fmt.Errorf("decode Docker image inspection: %w", err)
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "image", cause: err}
 	}
 	if image.ID == "" {
-		return inventory.RuntimeObservation{}, "", errors.New("decode Docker image inspection: immutable image identity is missing")
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "image", cause: errors.New("immutable image identity is missing")}
 	}
 	if image.ID != container.ImageID {
-		return inventory.RuntimeObservation{}, "", errors.New("Docker image inspection returned an identity different from the container reference")
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "image", cause: errors.New("identity differs from container reference")}
 	}
 
 	startedAt, err := parseStartedAt(container.StartedAt)
 	if err != nil {
-		return inventory.RuntimeObservation{}, "", fmt.Errorf("decode Docker container start time: %w", err)
+		return inventory.RuntimeObservation{}, "", &itemInspectionError{stage: "container", cause: errors.New("invalid start time")}
 	}
 	health := strings.TrimSpace(container.Health)
 	if health == "" {
@@ -239,6 +257,25 @@ func inspectOne(ctx context.Context, runner commandRunner, containerID string, o
 		StartedAt:      startedAt,
 		ObservedAt:     observedAt,
 	}, "", nil
+}
+
+type itemInspectionError struct {
+	stage string
+	cause error
+}
+
+func (e *itemInspectionError) Error() string {
+	return "Docker " + e.stage + " inspection failed"
+}
+
+func (e *itemInspectionError) Unwrap() error { return e.cause }
+
+func inspectionWarning(err error) string {
+	var itemErr *itemInspectionError
+	if errors.As(err, &itemErr) && itemErr.stage == "image" {
+		return "image inspection failed; observation rejected"
+	}
+	return "container inspection failed; observation rejected"
 }
 
 type containerView struct {

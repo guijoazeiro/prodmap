@@ -7,8 +7,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/guijoazeiro/prodmap/internal/inventory"
 )
 
 func TestAppInitIsIdempotentAndDoctorEmitsValidJSON(t *testing.T) {
@@ -86,6 +89,50 @@ func TestAppVersionJSONUsesInjectedBuildInfo(t *testing.T) {
 	data := envelope["data"].(map[string]any)
 	if data["version"] != "1.2.3" || data["commit"] != "abc" {
 		t.Fatalf("version data = %#v", data)
+	}
+}
+
+func TestAllCommandsHelpIsSuccessfulAndSideEffectFree(t *testing.T) {
+	commands := []string{"init", "doctor", "status", "services", "runtime", "explain", "version"}
+	for _, command := range commands {
+		for _, args := range [][]string{{command, "--help"}, {command, "--json", "--help"}} {
+			name := command + " help"
+			if len(args) == 3 {
+				name += " with json flag"
+			}
+			t.Run(name, func(t *testing.T) {
+				projectDir := t.TempDir()
+				app, stdout, stderr := testApp(projectDir)
+				app.WorkingDir = func() (string, error) {
+					t.Fatal("help executed working-directory discovery")
+					return "", errors.New("unreachable")
+				}
+				app.LookPath = func(string) (string, error) {
+					t.Fatal("help executed dependency discovery")
+					return "", errors.New("unreachable")
+				}
+				app.RuntimeSource = func() inventory.RuntimeSource {
+					t.Fatal("help constructed the Docker runtime source")
+					return nil
+				}
+
+				if code := app.Run(context.Background(), args); code != 0 {
+					t.Fatalf("%v exit = %d, stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+				}
+				if !strings.Contains(stdout.String(), "Usage of "+command+":") {
+					t.Fatalf("%v stdout does not contain command help: %q", args, stdout.String())
+				}
+				if strings.Contains(stdout.String(), "flag: help requested") || strings.Contains(stdout.String(), `"error"`) {
+					t.Fatalf("%v rendered help as an error: %q", args, stdout.String())
+				}
+				if stderr.Len() != 0 {
+					t.Fatalf("%v stderr = %q, want empty", args, stderr.String())
+				}
+				if _, err := os.Stat(filepath.Join(projectDir, ".prodmap")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("%v changed project state, stat error = %v", args, err)
+				}
+			})
+		}
 	}
 }
 
