@@ -22,13 +22,16 @@ type initResult struct {
 
 func (a *App) runInit(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
-	flags.SetOutput(a.Stderr)
 	projectDir := flags.String("project-dir", "", "project directory")
 	dataDir := flags.String("data-dir", "", "database path")
 	jsonOutput := flags.Bool("json", false, "emit JSON")
 	interactive := flags.Bool("interactive", false, "allow interactive mode")
 	force := flags.Bool("force", false, "preserve existing files and re-run initialization")
-	if err := flags.Parse(args); err != nil {
+	help, err := a.parseCommandFlags(flags, args)
+	if help {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("parse init flags: %w: %v", errs.ErrInvalid, err)
 	}
 	if flags.NArg() != 0 {

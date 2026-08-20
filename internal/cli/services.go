@@ -29,9 +29,12 @@ type servicesResult struct {
 
 func (a *App) runServices(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("services", flag.ContinueOnError)
-	flags.SetOutput(a.Stderr)
 	common := addInventoryFlags(flags)
-	if err := flags.Parse(args); err != nil {
+	help, err := a.parseCommandFlags(flags, args)
+	if help {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("parse services flags: %w: %v", errs.ErrInvalid, err)
 	}
 	if flags.NArg() != 0 {

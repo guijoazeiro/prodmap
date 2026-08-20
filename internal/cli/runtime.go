@@ -59,7 +59,6 @@ type runtimePagination struct {
 
 func (a *App) runRuntime(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("runtime", flag.ContinueOnError)
-	flags.SetOutput(a.Stderr)
 	common := addInventoryFlags(flags)
 	service := flags.String("service", "", "filter by service logical key")
 	environment := flags.String("environment", "", "filter by environment")
@@ -67,8 +66,12 @@ func (a *App) runRuntime(ctx context.Context, args []string) error {
 	refresh := flags.Bool("refresh", false, "inspect Docker before querying")
 	limit := flags.Int("limit", 100, "maximum number of results")
 	cursor := flags.String("cursor", "", "opaque pagination cursor")
-	if err := flags.Parse(args); err != nil {
-		return fmt.Errorf("parse runtime flags: %w: %v", errs.ErrInvalid, err)
+	help, parseErr := a.parseCommandFlags(flags, args)
+	if help {
+		return nil
+	}
+	if parseErr != nil {
+		return fmt.Errorf("parse runtime flags: %w: %v", errs.ErrInvalid, parseErr)
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("runtime accepts no positional arguments: %w", errs.ErrInvalid)
