@@ -1,7 +1,9 @@
 package docker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -9,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/guijoazeiro/prodmap/internal/errs"
@@ -25,6 +28,77 @@ type runnerFunc func(context.Context, ...string) ([]byte, error)
 
 func (f runnerFunc) Run(ctx context.Context, args ...string) ([]byte, error) {
 	return f(ctx, args...)
+}
+
+func TestContainerInspectTemplateHandlesOptionalHealth(t *testing.T) {
+	for _, forbidden := range []string{".Config.Env", ".Mounts", ".State.Health", "Health.Log", "{{json .State}}"} {
+		if strings.Contains(containerInspectTemplate, forbidden) {
+			t.Fatalf("container projection requests forbidden field %q: %s", forbidden, containerInspectTemplate)
+		}
+	}
+	if !strings.Contains(containerInspectTemplate, `(index .State "Health")`) {
+		t.Fatalf("container projection does not use safe optional Health lookup: %s", containerInspectTemplate)
+	}
+
+	projection, err := template.New("container-inspect").Option("missingkey=error").Funcs(template.FuncMap{
+		"json": func(value any) (string, error) {
+			encoded, marshalErr := json.Marshal(value)
+			return string(encoded), marshalErr
+		},
+	}).Parse(containerInspectTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name       string
+		health     any
+		setHealth  bool
+		wantHealth string
+	}{
+		{name: "Health key absent", wantHealth: ""},
+		{name: "Health is null", setHealth: true, health: nil, wantHealth: ""},
+		{name: "healthcheck starting", setHealth: true, health: map[string]any{"Status": "starting", "Log": []any{"secret-health-log"}}, wantHealth: "starting"},
+		{name: "healthcheck healthy", setHealth: true, health: map[string]any{"Status": "healthy"}, wantHealth: "healthy"},
+		{name: "healthcheck unhealthy", setHealth: true, health: map[string]any{"Status": "unhealthy"}, wantHealth: "unhealthy"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := map[string]any{
+				"Status":    "running",
+				"StartedAt": "2026-08-19T16:00:00Z",
+			}
+			if test.setHealth {
+				state["Health"] = test.health
+			}
+			input := map[string]any{
+				"Id":           containerA,
+				"Name":         "/api",
+				"Image":        imageA,
+				"RestartCount": int64(1),
+				"State":        state,
+				"Config": map[string]any{
+					"Image": "registry.example/api:latest",
+					"Env":   []string{"SECRET_TOKEN=must-not-leak"},
+				},
+				"Mounts": []any{map[string]any{"Source": "/must/not/leak"}},
+			}
+			var rendered bytes.Buffer
+			if err := projection.Execute(&rendered, input); err != nil {
+				t.Fatalf("render optional Health projection: %v", err)
+			}
+			var decoded containerView
+			if err := decodeProjection(rendered.Bytes(), &decoded); err != nil {
+				t.Fatalf("projection is not valid decodable JSON: %v\n%s", err, rendered.String())
+			}
+			if decoded.Health != test.wantHealth {
+				t.Fatalf("health = %q, want %q; projection=%s", decoded.Health, test.wantHealth, rendered.String())
+			}
+			if strings.Contains(rendered.String(), "must-not-leak") || strings.Contains(rendered.String(), "secret-health-log") {
+				t.Fatalf("projection leaked sensitive input: %s", rendered.String())
+			}
+		})
+	}
 }
 
 func TestInspectRuntimeIsDeterministicAndSanitizesMetadata(t *testing.T) {
@@ -192,6 +266,113 @@ func TestInspectRuntimeRejectsContainerThatDisappears(t *testing.T) {
 	}
 	if strings.Contains(batch.Warnings[0], containerA) || strings.Contains(batch.Warnings[0], "sensitive") {
 		t.Fatalf("warning was not sanitized: %q", batch.Warnings[0])
+	}
+}
+
+func TestInspectRuntimeRejectsImageThatDisappears(t *testing.T) {
+	notFound := &commandError{cause: errors.New("exit status 1"), notFound: true}
+	runner := runnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "ps":
+			return []byte(containerA + "\n" + containerB), nil
+		case "container":
+			if args[len(args)-1] == containerA {
+				return containerProjection(containerA, "/api", "api:latest", imageA, "running", "", 0, "2026-08-19T16:00:00Z"), nil
+			}
+			return containerProjection(containerB, "/worker", "worker:v2", imageB, "running", "", 0, "2026-08-19T16:00:00Z"), nil
+		case "image":
+			if args[len(args)-1] == imageA {
+				return nil, notFound
+			}
+			return []byte(`{"id":"` + imageB + `","repo_digests":[],"repo_tags":["worker:v2"],"labels":{}}`), nil
+		default:
+			return nil, errors.New("unexpected operation")
+		}
+	})
+	source := &Source{runner: runner, now: func() time.Time { return time.Date(2026, 8, 19, 17, 0, 0, 0, time.UTC) }}
+
+	batch, err := source.InspectRuntime(context.Background())
+	if err != nil {
+		t.Fatalf("InspectRuntime() error = %v", err)
+	}
+	if batch.Rejected != 1 || len(batch.Observations) != 1 || batch.Observations[0].ExternalID != containerB {
+		t.Fatalf("batch = %+v", batch)
+	}
+	if !reflect.DeepEqual(batch.Warnings, []string{"image disappeared during read-only inspection; observation rejected"}) {
+		t.Fatalf("warnings = %#v", batch.Warnings)
+	}
+}
+
+func TestInspectRuntimeIsolatesSanitizedItemFailureAsPartialBatch(t *testing.T) {
+	cause := errors.New("template failed; token=must-not-leak")
+	runner := runnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "ps":
+			return []byte(containerA + "\n" + containerB), nil
+		case "container":
+			if args[len(args)-1] == containerA {
+				return nil, cause
+			}
+			return containerProjection(containerB, "/worker", "worker:v2", imageB, "running", "", 0, "2026-08-19T16:00:00Z"), nil
+		case "image":
+			return []byte(`{"id":"` + imageB + `","repo_digests":[],"repo_tags":["worker:v2"],"labels":{}}`), nil
+		default:
+			return nil, errors.New("unexpected operation")
+		}
+	})
+	source := &Source{runner: runner}
+
+	batch, err := source.InspectRuntime(context.Background())
+	if err != nil {
+		t.Fatalf("InspectRuntime() error = %v", err)
+	}
+	if batch.Rejected != 1 || len(batch.Observations) != 1 || batch.Observations[0].ExternalID != containerB {
+		t.Fatalf("batch = %+v", batch)
+	}
+	if !reflect.DeepEqual(batch.Warnings, []string{"container inspection failed; observation rejected"}) {
+		t.Fatalf("warnings = %#v", batch.Warnings)
+	}
+	if strings.Contains(strings.Join(batch.Warnings, " "), "token") || strings.Contains(strings.Join(batch.Warnings, " "), "must-not-leak") {
+		t.Fatalf("partial batch warning leaked diagnostic: %#v", batch.Warnings)
+	}
+}
+
+func TestInspectRuntimeFailsWhenEveryListedContainerFails(t *testing.T) {
+	cause := errors.New("template parsing error; token=must-not-leak")
+	source := &Source{runner: runnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "ps" {
+			return []byte(containerA + "\n" + containerB), nil
+		}
+		return nil, cause
+	})}
+
+	batch, err := source.InspectRuntime(context.Background())
+	if err == nil {
+		t.Fatalf("InspectRuntime() batch = %+v, want systemic inspection failure", batch)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("error = %v, want original cause preserved", err)
+	}
+	if strings.Contains(err.Error(), "token") || strings.Contains(err.Error(), "must-not-leak") {
+		t.Fatalf("systemic error leaked diagnostic: %v", err)
+	}
+	if len(batch.Observations) != 0 {
+		t.Fatalf("failed systemic inspection returned observations: %+v", batch)
+	}
+}
+
+func TestInspectRuntimePropagatesDaemonUnavailableDuringItemInspection(t *testing.T) {
+	unavailable := &commandError{cause: errors.New("exit status 1"), unavailable: true}
+	source := &Source{runner: runnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "ps" {
+			return []byte(containerA), nil
+		}
+		return nil, unavailable
+	})}
+
+	_, err := source.InspectRuntime(context.Background())
+	if !errors.Is(err, errs.ErrUnavailable) {
+		t.Fatalf("error = %v, want ErrUnavailable", err)
 	}
 }
 

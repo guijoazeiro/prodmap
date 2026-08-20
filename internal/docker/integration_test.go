@@ -34,5 +34,10 @@ func TestRealDockerInspection(t *testing.T) {
 		if observation.ExternalID == "" || observation.ImageID == "" || observation.ObservedAt.IsZero() {
 			t.Fatalf("Docker observation lacks immutable identity or freshness: %+v", observation)
 		}
+		switch observation.Health {
+		case "none", "starting", "healthy", "unhealthy":
+		default:
+			t.Fatalf("Docker observation has unsupported health status %q: %+v", observation.Health, observation)
+		}
 	}
 }
