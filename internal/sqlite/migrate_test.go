@@ -82,7 +82,7 @@ func TestOpenUpgradesFoundationDatabaseAppendOnly(t *testing.T) {
 	}
 	defer store.Close()
 	status, err := store.MigrationStatus(context.Background())
-	if err != nil || status.AppliedVersion != 2 || !status.Current {
+	if err != nil || status.AppliedVersion != 3 || !status.Current {
 		t.Fatalf("upgraded migration status = %+v, err=%v", status, err)
 	}
 	var count int
@@ -91,6 +91,89 @@ func TestOpenUpgradesFoundationDatabaseAppendOnly(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatal("Phase 1 runtime_instances table was not created during upgrade")
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='telemetry_ingestions'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatal("Phase 2A telemetry_ingestions table was not created during upgrade")
+	}
+}
+
+func TestOpenUpgradesDatabaseStartingAtMigrationTwo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upgrade-from-two.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	first, err := embeddedMigrations.ReadFile("migrations/000001_foundation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := embeddedMigrations.ReadFile("migrations/000002_runtime_provenance.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigrations(context.Background(), db, fstest.MapFS{
+		"migrations/000001_foundation.sql":         {Data: first},
+		"migrations/000002_runtime_provenance.sql": {Data: second},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	status, err := store.MigrationStatus(context.Background())
+	if err != nil || status.AppliedVersion != 3 || !status.Current {
+		t.Fatalf("migration status=%+v err=%v", status, err)
+	}
+	var phaseOneRows int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM runtime_instances").Scan(&phaseOneRows); err != nil || phaseOneRows != 0 {
+		t.Fatalf("Phase 1 state changed during migration: rows=%d err=%v", phaseOneRows, err)
+	}
+	var telemetryTable int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='telemetry_ingestions'`).Scan(&telemetryTable); err != nil || telemetryTable != 1 {
+		t.Fatalf("telemetry table count=%d err=%v", telemetryTable, err)
+	}
+}
+
+func TestMigrationThreeStoresResolvedTargetOnlyOnTemporalObservation(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "temporal-target-schema.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	hasColumn := func(table, column string) bool {
+		rows, err := store.db.Query(`PRAGMA table_info(` + table + `)`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, kind string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+				t.Fatal(err)
+			}
+			if name == column {
+				return true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return false
+	}
+	if hasColumn("dependencies", "target_service_id") || !hasColumn("service_dependency_observations", "target_service_id") {
+		t.Fatal("resolved target is not scoped exclusively to the temporal observation")
 	}
 }
 
