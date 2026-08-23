@@ -1,0 +1,80 @@
+{
+  "graph": {
+    "command": "graph",
+    "data": {
+      "at": "2026-08-19T12:00:02.5Z",
+      "edges": [
+        {
+          "confidence": {
+            "algorithm_version": "otel-topology/v1",
+          "basis": "parent/child client/server propagation",
+            "level": "HIGH"
+          },
+          "dependency_kind": "service",
+          "duration_sum_ns": 1000000000,
+          "error_count": 0,
+          "evidence_ids": [
+            "<uuid>",
+            "<uuid>"
+          ],
+          "from": "<uuid>",
+          "id": "<uuid>",
+          "limitations": [],
+          "relation_type": "OBSERVED",
+          "request_count": 1,
+          "to": "<uuid>",
+          "window_end": "2026-08-19T12:01:00Z",
+          "window_start": "2026-08-19T12:00:00Z"
+        }
+      ],
+      "environment": "default",
+      "nodes": [
+        {
+          "display_name": "checkout",
+          "id": "<uuid>",
+          "logical_key": "checkout",
+          "type": "service"
+        },
+        {
+          "display_name": "payment",
+          "id": "<uuid>",
+          "logical_key": "payment",
+          "type": "service"
+        }
+      ],
+      "roots": [
+        "<uuid>"
+      ],
+      "truncated": false
+    },
+    "generated_at": "2026-08-19T12:00:00Z",
+    "pagination": null,
+    "schema_version": "1.0",
+    "warnings": []
+  },
+  "telemetry_ingest": {
+    "command": "telemetry ingest",
+    "data": {
+      "dependencies": 1,
+      "endpoints": 2,
+      "environment": "default",
+      "idempotent_replay": false,
+      "ingestion_id": "<uuid>",
+      "lines": 1,
+      "observations": 1,
+      "resource_spans": 2,
+      "services": 2,
+      "source_hash": "sha256:86e3174450d38a4d0f9dfb86841be83ffdf9656b1a3bf8ed46709c8398443592",
+      "spans_accepted": 3,
+      "spans_ignored": 0,
+      "spans_seen": 3,
+      "telemetry_windows": 2,
+      "window_end": "2026-08-19T12:01:00Z",
+      "window_start": "2026-08-19T12:00:00Z"
+    },
+    "generated_at": "2026-08-19T12:00:00Z",
+    "pagination": null,
+    "schema_version": "1.0",
+    "warnings": []
+  }
+}
