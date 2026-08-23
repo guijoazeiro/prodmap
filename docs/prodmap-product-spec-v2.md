@@ -48,7 +48,7 @@ A hipótese do produto é:
 
 > Contexto de produção previamente correlacionado permite que pessoas e agentes diagnostiquem problemas com mais rapidez, precisão e menos exploração do que o acesso bruto e separado a logs, métricas e traces.
 
-O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo. A Foundation e um protótipo estritamente limitado ao necessário para produzir o pacote do experimento PODEM ser construídos antes da decisão, como investimento de validação; isso não constitui evidência de `go` nem autoriza Phase 2 ou posteriores.
+O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo. A Foundation e protótipos explicitamente autorizados, estritamente limitados ao necessário para produzir o pacote do experimento, PODEM ser construídos antes da decisão como investimento de validação; isso não constitui evidência de `go` nem autoriza o roadmap completo.
 
 ### 2.1 Experimento 001 — correlação versus contexto bruto
 
@@ -697,7 +697,7 @@ Entregas:
 
 **Gate:** ganho consistente e mensurável, ou uma tese revisada que justifique continuar.
 
-**Exceção de validação:** Phase 0 e, quando autorizado explicitamente, o menor protótipo da Phase 1 necessário ao Experimento 001 podem avançar antes deste gate. Essa exceção não valida a tese, não autoriza expansão do roadmap e não substitui a decisão documentada `go`, `pivot` ou `stop`.
+**Exceção de validação:** Phase 0, o menor protótipo da Phase 1 e a Phase 2A descrita abaixo podem avançar antes deste gate somente quando autorizados explicitamente para preparar o Experimento 001. Essa exceção não valida a tese, não autoriza a Phase 2 completa nem substitui a decisão documentada `go`, `pivot` ou `stop`.
 
 ### Phase 0 — Foundation
 
@@ -742,6 +742,19 @@ sem metadata de commit            → UNKNOWN
 ```
 
 **Gate:** executar a vertical slice ponta a ponta, identificar de forma confiável o que está rodando e admitir `UNKNOWN` quando a proveniência não puder ser determinada. Entidades de OTel, graph, baseline e regression não devem virar tabelas antes desse gate.
+
+### Phase 2A — OTel Validation Slice (exceção experimental)
+
+**Objetivo:** produzir somente o componente topológico reprodutível necessário ao pacote correlacionado do Experimento 001.
+
+Entregas limitadas:
+
+- ingestão offline de traces OTLP JSONL congelados;
+- serviços, endpoints, dependências `OBSERVED` e agregados temporais limitados;
+- persistência local e consulta `graph`;
+- starter opcional e versionado do OTel Collector.
+
+Métricas e logs OTLP, receiver vivo, deployments, baseline, regression, export genérico e MCP permanecem fora. A conclusão da slice não constitui `go` e não desbloqueia a Phase 2 completa.
 
 ### Phase 2 — Production Graph
 

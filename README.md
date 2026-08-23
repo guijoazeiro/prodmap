@@ -69,9 +69,33 @@ Each command also accepts `--json`. `runtime` supports `--service`, `--environme
 
 The prototype derives a service logical key from the normalized image repository name, not from the container name. Artifact identity prefers a validated `sha256` or `sha512` repository digest, then a validated immutable local image ID, and only then a mutable tag. OCI revision metadata can produce an `EXACT` correlation only when the artifact identity is immutable, the complete SHA resolves locally, and no identity or temporal contradiction exists. Missing or ambiguous data remains `LOW` or `UNKNOWN` and is retained in the evidence explanation.
 
-Phase 1 deliberately has no OpenTelemetry, deployment intelligence, production graph, Kubernetes, or remote source integrations. Runtime disappearance is not interpreted as removal, freshness uses a provisional five-minute local threshold, and the `default` environment is used until environment mapping is introduced in a later phase. This prototype does not constitute execution or a `go`, `pivot`, or `stop` decision for Experiment 001.
+Phase 1 deliberately has no OpenTelemetry, deployment intelligence, production graph, Kubernetes, or remote source integrations. Runtime disappearance is not interpreted as removal, freshness uses a provisional five-minute local threshold, and the `default` environment is used until environment mapping is introduced in a later phase.
+
+## Phase 2A experimental validation slice
+
+An explicitly authorized, bounded exception prepares the topology input for Experiment 001 without declaring Phase 2 complete or deciding `go`, `pivot`, or `stop`. It accepts only frozen OTLP trace JSONL and produces observed topology plus temporal aggregates:
+
+```bash
+./bin/prodmap telemetry ingest \
+  --file testdata/otel/linked-services.otlp.jsonl \
+  --window-start 2026-08-19T12:00:00Z \
+  --window-end 2026-08-19T12:01:00Z \
+  --json
+
+./bin/prodmap graph \
+  --service checkout \
+  --at 2026-08-19T12:00:02.5Z \
+  --json
+```
+
+The input is one official OTLP `ExportTraceServiceRequest` JSON message per line. Parsing and redaction finish before a database transaction begins. Every edge is `OBSERVED`, never `EXACT`; missing destination data creates no edge. The optional pinned Collector starter and shutdown instructions are in [`deploy/otel-collector`](deploy/otel-collector/README.md). A manual smoke test is documented in [`docs/phase-2a-smoke-test.md`](docs/phase-2a-smoke-test.md).
+
+The versioned JSON contract examples are in [`docs/phase-2a-json-examples.md`](docs/phase-2a-json-examples.md).
+
+Metrics/logs ingestion, a live receiver in Prodmap, deployments, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 
 ## Specifications
 
 - [`docs/prodmap-product-spec-v2.md`](docs/prodmap-product-spec-v2.md)
 - [`docs/prodmap-technical-spec-v1.md`](docs/prodmap-technical-spec-v1.md)
+- [`docs/experiments/001-correlation-vs-raw-context.md`](docs/experiments/001-correlation-vs-raw-context.md)

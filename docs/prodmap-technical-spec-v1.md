@@ -327,6 +327,18 @@ Critérios de aceite:
 - a correção do erro causa recuperação automática;
 - encerrar o watcher não deixa processo do Prodmap em execução; `.tmp/` permanece descartável e ignorado caso o terminal force o encerramento antes da limpeza do Air.
 
+## ADRs 015–017 — Exceção e contratos da Phase 2A
+
+**Status:** aceitos para a slice de validação
+
+As decisões executáveis estão registradas separadamente para manter o escopo explícito:
+
+- [`ADR-015`](adr/015-phase-2a-experimental-exception.md): Phase 2A é somente uma exceção para preparar o Experimento 001;
+- [`ADR-016`](adr/016-otel-ingestion-format.md): OTLP/JSON canônico congelado, parser oficial e ausência de receiver vivo;
+- [`ADR-017`](adr/017-topology-identity-cardinality.md): identidades, confidence, janelas, allowlists e limites de cardinalidade.
+
+Esses ADRs não autorizam deployments, baseline, regression ou a Phase 2 completa.
+
 ---
 
 # Parte II — Schema conceitual do domínio
@@ -1332,10 +1344,9 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 
 - driver SQLite e biblioteca de migração;
 - framework CLI, se algum;
-- formato exato de ingestão OTel;
 - tamanho padrão das janelas e thresholds por métrica;
 - função de decaimento temporal;
-- normalização de nomes de serviços;
+- extensões futuras da normalização de nomes de serviços além da regra fechada da Phase 2A;
 - estratégia de compactação e retenção;
 - formato do investigation package;
 - transporte do servidor MCP;
@@ -1348,7 +1359,7 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 ## 27. Ordem recomendada de implementação
 
 ```text
-0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation e o protótipo mínimo usado para produzir o pacote experimental podem anteceder a decisão sem representar `go`
+0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation, o protótipo mínimo da Phase 1 e a Phase 2A usada para produzir o pacote experimental podem anteceder a decisão sem representar `go`
 1. materializar somente os ADRs necessários para Phase 0/1
 2. criar o esqueleto mínimo por capacidades
 3. implementar tipos fundamentais: IDs, tempo, enums e erros
@@ -1360,7 +1371,7 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 9. cobrir EXACT, LOW/ambíguo e UNKNOWN com fixtures
 10. entregar init, doctor, runtime e explain
 11. avaliar a arquitetura com o código e uso reais
-12. somente então iniciar OTel e Production Graph
+12. executar somente a Phase 2A offline quando explicitamente autorizada para o Experimento 001; iniciar a Production Graph completa apenas após o gate
 13. depois implementar DeploymentSource e GitHub
 14. implementar Baseline, BehaviorChange e RegressionCandidate
 15. validar com corpus de falsos positivos
@@ -1397,7 +1408,7 @@ apenas tag mutável                → LOW
 sem metadata de commit            → UNKNOWN
 ```
 
-Somente após essa slice funcionar ponta a ponta será permitido expandir o schema para OTel, grafo, baseline e regressão.
+Somente após essa slice funcionar ponta a ponta será permitido expandir o schema. A exceção experimental Phase 2A pode adicionar exclusivamente OTel offline, grafo observado e agregados necessários ao Experimento 001; baseline e regressão continuam bloqueados.
 
 ---
 
