@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+func TestNormalizeServiceLogicalKeyIsSharedAndNamespaceAware(t *testing.T) {
+	if got := NormalizeServiceLogicalKey(" Checkout API ", " Payments Team "); got != "payments-team.checkout-api" {
+		t.Fatalf("namespaced logical key = %q", got)
+	}
+	if got := NormalizeServiceLogicalKey("Checkout API", ""); got != "checkout-api" {
+		t.Fatalf("unnamespaced logical key = %q", got)
+	}
+}
+
 func TestNormalizeArtifactAcceptsOnlyValidatedDigests(t *testing.T) {
 	sha256Lower := strings.Repeat("a", 64)
 	sha256Upper := strings.Repeat("A", 64)
