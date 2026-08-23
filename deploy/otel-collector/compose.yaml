@@ -1,0 +1,32 @@
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.136.0
+    user: "${OTEL_UID:-1000}:${OTEL_GID:-1000}"
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    configs:
+      - source: collector_config
+        target: /etc/otelcol-contrib/config.yaml
+    volumes:
+      - ${OTEL_OUTPUT_DIR:-./data}:/var/lib/otelcol:Z
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:13133:13133"
+    restart: "no"
+
+  health-probe:
+    image: curlimages/curl:8.12.1
+    network_mode: "service:collector"
+    depends_on:
+      - collector
+    entrypoint: ["/bin/sh", "-c", "while :; do sleep 3600; done"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:13133/"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    restart: "no"
+
+configs:
+  collector_config:
+    file: ./otel-collector.yaml
