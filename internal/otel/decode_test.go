@@ -42,6 +42,9 @@ func TestDecodeLinkedServicesIsSanitizedAndNeverExact(t *testing.T) {
 	if observation.Confidence == topology.Exact {
 		t.Fatal("OTel observation was classified EXACT")
 	}
+	if observation.RequestCount != 1 || observation.ErrorCount != 1 {
+		t.Fatalf("distributed operation counts = %d/%d", observation.RequestCount, observation.ErrorCount)
+	}
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +56,119 @@ func TestDecodeLinkedServicesIsSanitizedAndNeverExact(t *testing.T) {
 	}
 	if len(snapshot.Evidence) != 2 || !strings.HasPrefix(snapshot.Evidence[0].Fingerprint, telemetry.EvidenceFingerprintV1+":") {
 		t.Fatalf("evidence = %+v", snapshot.Evidence)
+	}
+}
+
+func TestDecodeSpanClassifiesStatusErrorAndHTTP5xx(t *testing.T) {
+	start := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		statusCode tracepb.Status_StatusCode
+		httpStatus int64
+		wantError  bool
+	}{
+		{name: "success", wantError: false},
+		{name: "HTTP 499", httpStatus: 499, wantError: false},
+		{name: "HTTP 500 without span status", httpStatus: 500, wantError: true},
+		{name: "HTTP 599", httpStatus: 599, wantError: true},
+		{name: "span ERROR without HTTP status", statusCode: tracepb.Status_STATUS_CODE_ERROR, wantError: true},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			span := &tracepb.Span{
+				TraceId: bytesOf(byte(index+1), 16), SpanId: bytesOf(byte(index+11), 8), Kind: tracepb.Span_SPAN_KIND_SERVER,
+				StartTimeUnixNano: uint64(start.UnixNano()), EndTimeUnixNano: uint64(start.Add(time.Nanosecond).UnixNano()),
+				Status: &tracepb.Status{Code: test.statusCode},
+			}
+			if test.httpStatus != 0 {
+				span.Attributes = []*commonpb.KeyValue{{Key: "http.response.status_code", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: test.httpStatus}}}}
+			}
+			decoded, _, err := decodeSpan(span, "payment", "payment", "sha256:"+strings.Repeat("a", 64), start, start.Add(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decoded.isError != test.wantError {
+				t.Fatalf("isError=%t want=%t", decoded.isError, test.wantError)
+			}
+		})
+	}
+}
+
+func TestDirectClientServerOperationCountsErrorOnceFromEitherSide(t *testing.T) {
+	start := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	decodeOperationSpan := func(t *testing.T, service string, kind tracepb.Span_SpanKind, id, parent byte, status tracepb.Status_StatusCode, httpStatus int64) decodedSpan {
+		t.Helper()
+		span := &tracepb.Span{
+			TraceId: bytesOf(1, 16), SpanId: bytesOf(id, 8), Kind: kind,
+			StartTimeUnixNano: uint64(start.Add(time.Second).UnixNano()), EndTimeUnixNano: uint64(start.Add(2 * time.Second).UnixNano()),
+			Status: &tracepb.Status{Code: status},
+		}
+		if parent != 0 {
+			span.ParentSpanId = bytesOf(parent, 8)
+		}
+		if httpStatus != 0 {
+			span.Attributes = []*commonpb.KeyValue{{Key: "http.response.status_code", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: httpStatus}}}}
+		}
+		decoded, _, err := decodeSpan(span, service, service, "sha256:"+strings.Repeat("a", 64), start, start.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+	for _, test := range []struct {
+		name         string
+		clientStatus tracepb.Status_StatusCode
+		serverStatus tracepb.Status_StatusCode
+		serverHTTP   int64
+		wantErrors   int64
+	}{
+		{name: "CLIENT success SERVER ERROR and HTTP 500", serverStatus: tracepb.Status_STATUS_CODE_ERROR, serverHTTP: 500, wantErrors: 1},
+		{name: "CLIENT ERROR SERVER ERROR", clientStatus: tracepb.Status_STATUS_CODE_ERROR, serverStatus: tracepb.Status_STATUS_CODE_ERROR, wantErrors: 1},
+		{name: "both success", wantErrors: 0},
+		{name: "HTTP 500 without span status", serverHTTP: 500, wantErrors: 1},
+		{name: "span ERROR without HTTP status", serverStatus: tracepb.Status_STATUS_CODE_ERROR, wantErrors: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := decodeOperationSpan(t, "checkout", tracepb.Span_SPAN_KIND_CLIENT, 2, 0, test.clientStatus, 0)
+			server := decodeOperationSpan(t, "payment", tracepb.Span_SPAN_KIND_SERVER, 3, 2, test.serverStatus, test.serverHTTP)
+			build := func(spans []decodedSpan) telemetry.DependencyObservation {
+				snapshot := telemetry.Snapshot{WindowStart: start, WindowEnd: start.Add(time.Minute), ObservedAt: start.Add(time.Minute)}
+				if err := aggregate(&snapshot, spans); err != nil {
+					t.Fatal(err)
+				}
+				if len(snapshot.Observations) != 1 {
+					t.Fatalf("observations=%+v", snapshot.Observations)
+				}
+				return snapshot.Observations[0]
+			}
+			forward, reverse := build([]decodedSpan{client, server}), build([]decodedSpan{server, client})
+			if !reflect.DeepEqual(forward, reverse) {
+				t.Fatalf("operation changed by order: forward=%+v reverse=%+v", forward, reverse)
+			}
+			if forward.RequestCount != 1 || forward.ErrorCount != test.wantErrors {
+				t.Fatalf("counts=%d/%d want=1/%d", forward.RequestCount, forward.ErrorCount, test.wantErrors)
+			}
+		})
+	}
+}
+
+func TestIncompatibleAssociationDoesNotContributeRemoteError(t *testing.T) {
+	start := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	client := decodedSpan{serviceKey: "checkout", serviceDisplay: "checkout", traceKey: "client", spanKey: "client:span", kind: tracepb.Span_SPAN_KIND_CLIENT, duration: 1, evidence: "client", attrs: attributes{peerService: "payment"}}
+	consumer := decodedSpan{serviceKey: "worker", serviceDisplay: "worker", traceKey: "consumer", spanKey: "consumer:span", kind: tracepb.Span_SPAN_KIND_CONSUMER, duration: 1, evidence: "consumer", isError: true, links: []spanLink{{spanKey: client.spanKey}}}
+	build := func(spans []decodedSpan) telemetry.DependencyObservation {
+		snapshot := telemetry.Snapshot{WindowStart: start, WindowEnd: start.Add(time.Minute), ObservedAt: start.Add(time.Minute)}
+		if err := aggregate(&snapshot, spans); err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Observations) != 1 {
+			t.Fatalf("observations=%+v", snapshot.Observations)
+		}
+		return snapshot.Observations[0]
+	}
+	forward, reverse := build([]decodedSpan{client, consumer}), build([]decodedSpan{consumer, client})
+	if !reflect.DeepEqual(forward, reverse) || forward.Confidence != topology.Medium || forward.ErrorCount != 0 {
+		t.Fatalf("incompatible remote error changed fallback: forward=%+v reverse=%+v", forward, reverse)
 	}
 }
 
@@ -187,7 +303,7 @@ func TestAnyContradictoryLinkedSampleCapsAggregatedObservationDeterministically(
 func TestProducerConsumerSpanLinkIsOrderIndependentSanitizedAndNeverExact(t *testing.T) {
 	start := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	producer := decodedSpan{serviceKey: "publisher", serviceDisplay: "publisher", traceKey: "producer-trace", spanKey: "producer-trace:producer", kind: tracepb.Span_SPAN_KIND_PRODUCER, duration: 10, evidence: "producer-fingerprint"}
-	consumer := decodedSpan{serviceKey: "worker", serviceDisplay: "worker", traceKey: "consumer-trace", spanKey: "consumer-trace:consumer", kind: tracepb.Span_SPAN_KIND_CONSUMER, duration: 5, evidence: "consumer-fingerprint", links: []spanLink{{spanKey: producer.spanKey}}}
+	consumer := decodedSpan{serviceKey: "worker", serviceDisplay: "worker", traceKey: "consumer-trace", spanKey: "consumer-trace:consumer", kind: tracepb.Span_SPAN_KIND_CONSUMER, duration: 5, evidence: "consumer-fingerprint", isError: true, links: []spanLink{{spanKey: producer.spanKey}}}
 	build := func(spans []decodedSpan) telemetry.Snapshot {
 		snapshot := telemetry.Snapshot{WindowStart: start, WindowEnd: start.Add(time.Minute), ObservedAt: start.Add(time.Minute)}
 		if err := aggregate(&snapshot, spans); err != nil {
@@ -202,6 +318,9 @@ func TestProducerConsumerSpanLinkIsOrderIndependentSanitizedAndNeverExact(t *tes
 	observation := forward.Observations[0]
 	if observation.TargetServiceKey != "worker" || observation.Confidence != topology.High || observation.Basis != "producer/consumer SpanLink association" || observation.Confidence == topology.Exact {
 		t.Fatalf("SpanLink observation=%+v", observation)
+	}
+	if observation.RequestCount != 1 || observation.ErrorCount != 0 {
+		t.Fatalf("SpanLink counts=%d/%d", observation.RequestCount, observation.ErrorCount)
 	}
 	claims := map[string]bool{}
 	for _, item := range forward.Evidence {

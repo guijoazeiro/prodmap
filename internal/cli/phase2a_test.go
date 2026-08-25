@@ -118,7 +118,7 @@ func TestPhase2ACLIIngestReplayGraphTemporalConfidenceAndRedaction(t *testing.T)
 		t.Fatalf("graph=%#v", graph)
 	}
 	edge := edges[0].(map[string]any)
-	if edge["relation_type"] != "OBSERVED" || edge["confidence"].(map[string]any)["level"] != "HIGH" {
+	if edge["relation_type"] != "OBSERVED" || edge["confidence"].(map[string]any)["level"] != "HIGH" || edge["request_count"] != float64(1) || edge["error_count"] != float64(1) {
 		t.Fatalf("edge=%#v", edge)
 	}
 

@@ -36,6 +36,7 @@ func NewDecoder() *Decoder { return &Decoder{} }
 type attributes struct {
 	httpMethod      string
 	httpRoute       string
+	httpStatusCode  int64
 	rpcSystem       string
 	rpcService      string
 	rpcMethod       string
@@ -101,6 +102,7 @@ type dependencyResolution struct {
 	limitations      []string
 	evidenceClaims   map[string]string
 	pair             [2]string
+	associatedError  bool
 	ambiguous        bool
 	ok               bool
 }
@@ -428,7 +430,7 @@ func decodeSpan(span *tracepb.Span, serviceKey, display, sourceHash string, star
 	decoded := decodedSpan{
 		serviceKey: serviceKey, serviceDisplay: strings.TrimSpace(display), kind: span.GetKind(), traceKey: traceKey,
 		spanKey: spanKey, parentKey: parentKey, evidence: evidenceFingerprint(sourceHash, span.GetTraceId(), span.GetSpanId()),
-		start: started, duration: int64(endNS - startNS), isError: span.GetStatus().GetCode() == tracepb.Status_STATUS_CODE_ERROR, attrs: attrs,
+		start: started, duration: int64(endNS - startNS), isError: span.GetStatus().GetCode() == tracepb.Status_STATUS_CODE_ERROR || attrs.httpStatusCode >= 500, attrs: attrs,
 		droppedLinks: span.GetDroppedLinksCount(),
 	}
 	if len(span.GetLinks()) > telemetry.MaxLinksPerSpan {
@@ -548,6 +550,7 @@ func spanAttributes(values []*commonpb.KeyValue) (attributes, error) {
 			if typed.IntValue < 100 || typed.IntValue > 599 {
 				return attributes{}, fmt.Errorf("http.response.status_code is outside its valid range")
 			}
+			result.httpStatusCode = typed.IntValue
 		case "peer.service":
 			candidate, err := requiredScalarString(value)
 			if err != nil || !safeServiceTarget(candidate) {
@@ -761,7 +764,7 @@ func aggregateContext(ctx context.Context, result *telemetry.Snapshot, spans []d
 			return fmt.Errorf("%w: conflicting dependency targets within one observation", errs.ErrInvalid)
 		}
 		aggregate.observation.RequestCount++
-		if span.isError {
+		if span.isError || resolution.associatedError {
 			aggregate.observation.ErrorCount++
 		}
 		var sumOK bool
@@ -971,6 +974,14 @@ func resolveDependency(span decodedSpan, candidates []linkedSpan, services map[s
 		result.confidence = topology.High
 		result.basis, _ = directAssociationBasis(span, candidate)
 		result.pair = [2]string{span.evidence, candidate.span.evidence}
+		if span.kind == tracepb.Span_SPAN_KIND_CLIENT {
+			for _, linkedCandidate := range linked {
+				if linkedCandidate.span.kind == tracepb.Span_SPAN_KIND_SERVER && linkedCandidate.span.isError {
+					result.associatedError = true
+					break
+				}
+			}
+		}
 		result.evidenceClaims[candidate.span.evidence] = linkedEvidenceClaim(candidate.span.kind)
 		result.ok = true
 		for _, semanticKey := range comparableSemanticServiceKeys(span.attrs) {

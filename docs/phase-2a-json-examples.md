@@ -65,7 +65,7 @@ Identifiers and hashes below are illustrative; command envelopes always include 
         "window_start": "2026-08-19T12:00:00Z",
         "window_end": "2026-08-19T12:01:00Z",
         "request_count": 1,
-        "error_count": 0,
+        "error_count": 1,
         "duration_sum_ns": 1000000,
         "confidence": {
           "level": "HIGH",
@@ -88,4 +88,4 @@ Identifiers and hashes below are illustrative; command envelopes always include 
 
 Raw trace/span IDs and attributes are never returned. Selecting `--min-confidence exact` produces no OTel edges because observed topology is not exact identity or causality.
 
-For asynchronous traffic, a PRODUCER with a CONSUMER `SpanLink` uses basis `producer/consumer SpanLink association`. Semantic conventions without a direct association remain a MEDIUM fallback. If a direct target contradicts `peer.service` or `rpc.service`, the direct target is retained, confidence is capped at MEDIUM, and the contradiction appears in `limitations`. Resolved service targets are stored per observation, so a later window never rewrites an earlier dependency node.
+For a direct synchronous CLIENT→SERVER relation, each pair contributes one request and one error when either side reports `Status=ERROR` or an HTTP response status of 500 or higher. For asynchronous traffic, a PRODUCER with a CONSUMER `SpanLink` uses basis `producer/consumer SpanLink association` and retains outbound error semantics. Semantic conventions without a direct association remain a MEDIUM fallback. If a direct target contradicts `peer.service` or `rpc.service`, the direct target is retained, confidence is capped at MEDIUM, and the contradiction appears in `limitations`. Resolved service targets are stored per observation, so a later window never rewrites an earlier dependency node.
