@@ -333,11 +333,11 @@ Critérios de aceite:
 
 As decisões executáveis estão registradas separadamente para manter o escopo explícito:
 
-- [`ADR-015`](adr/015-phase-2a-experimental-exception.md): Phase 2A é somente uma exceção para preparar o Experimento 001;
+- [`ADR-015`](adr/015-phase-2a-experimental-exception.md): Phase 2A e a continuação limitada da Phase 2 para preparar e aprender com o Experimento 001;
 - [`ADR-016`](adr/016-otel-ingestion-format.md): OTLP/JSON canônico congelado, parser oficial e ausência de receiver vivo;
 - [`ADR-017`](adr/017-topology-identity-cardinality.md): identidades, confidence, janelas, allowlists e limites de cardinalidade.
 
-Esses ADRs não autorizam deployments, baseline, regression ou a Phase 2 completa.
+Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go`, exige nova revisão da tese ao final da Phase 2 e mantém a Phase 3 bloqueada.
 
 ---
 
@@ -1359,7 +1359,7 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 ## 27. Ordem recomendada de implementação
 
 ```text
-0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation, o protótipo mínimo da Phase 1 e a Phase 2A usada para produzir o pacote experimental podem anteceder a decisão sem representar `go`
+0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation, o protótipo mínimo da Phase 1, a Phase 2A e a conclusão limitada da Phase 2 usada para produzir e aprender com o pacote experimental podem anteceder a decisão sem representar `go`; a continuação é `continue-for-learning`, termina no gate da Phase 2 e mantém a Phase 3 bloqueada
 1. materializar somente os ADRs necessários para Phase 0/1
 2. criar o esqueleto mínimo por capacidades
 3. implementar tipos fundamentais: IDs, tempo, enums e erros
@@ -1371,8 +1371,8 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 9. cobrir EXACT, LOW/ambíguo e UNKNOWN com fixtures
 10. entregar init, doctor, runtime e explain
 11. avaliar a arquitetura com o código e uso reais
-12. executar somente a Phase 2A offline quando explicitamente autorizada para o Experimento 001; iniciar a Production Graph completa apenas após o gate
-13. depois implementar DeploymentSource e GitHub
+12. executar a Phase 2A offline e concluir a Production Graph somente sob `continue-for-learning`, com a aplicação de referência; revisar explicitamente a tese no gate da Phase 2 antes de qualquer avanço para a Phase 3
+13. somente após nova decisão explícita que autorize a Phase 3, implementar DeploymentSource e GitHub
 14. implementar Baseline, BehaviorChange e RegressionCandidate
 15. validar com corpus de falsos positivos
 16. implementar export e, somente depois, MCP
@@ -1408,7 +1408,7 @@ apenas tag mutável                → LOW
 sem metadata de commit            → UNKNOWN
 ```
 
-Somente após essa slice funcionar ponta a ponta será permitido expandir o schema. A exceção experimental Phase 2A pode adicionar exclusivamente OTel offline, grafo observado e agregados necessários ao Experimento 001; baseline e regressão continuam bloqueados.
+Somente após essa slice funcionar ponta a ponta será permitido expandir o schema. A exceção experimental permite à Phase 2 adicionar exclusivamente OTel offline, grafo observado e agregados necessários ao Experimento 001, sob `continue-for-learning` e com a aplicação de referência; baseline e regressão continuam bloqueados. A tese deve ser revisada no gate da Phase 2, e a Phase 3 permanece bloqueada até nova decisão explícita.
 
 ---
 

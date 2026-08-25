@@ -697,7 +697,7 @@ Entregas:
 
 **Gate:** ganho consistente e mensurável, ou uma tese revisada que justifique continuar.
 
-**Exceção de validação:** Phase 0, o menor protótipo da Phase 1 e a Phase 2A descrita abaixo podem avançar antes deste gate somente quando autorizados explicitamente para preparar o Experimento 001. Essa exceção não valida a tese, não autoriza a Phase 2 completa nem substitui a decisão documentada `go`, `pivot` ou `stop`.
+**Exceção de validação:** Phase 0, o menor protótipo da Phase 1, a Phase 2A e a conclusão limitada da Phase 2 podem avançar antes deste gate somente sob autorização explícita para preparar e aprender com o Experimento 001. A autorização vigente é [`continue-for-learning`](decisions/001-directional-pilot-continuation.md): um investimento interno limitado, distinto de `go`, `pivot` e `stop`. Ela não valida a tese, termina no gate da Phase 2, exige uso da aplicação de referência e nova revisão explícita da tese ao final da Phase 2. A Phase 3 permanece bloqueada.
 
 ### Phase 0 — Foundation
 
@@ -754,7 +754,7 @@ Entregas limitadas:
 - persistência local e consulta `graph`;
 - starter opcional e versionado do OTel Collector.
 
-Métricas e logs OTLP, receiver vivo, deployments, baseline, regression, export genérico e MCP permanecem fora. A conclusão da slice não constitui `go` e não desbloqueia a Phase 2 completa.
+Métricas e logs OTLP, receiver vivo, deployments, baseline, regression, export genérico e MCP permanecem fora. A conclusão da slice não constitui `go`; a conclusão limitada da Phase 2 somente é permitida sob `continue-for-learning` e termina no seu gate.
 
 ### Phase 2 — Production Graph
 
@@ -769,6 +769,8 @@ Entregas:
 - `graph` e contexto de serviço/endpoint.
 
 **Gate:** grafo reprodutível em aplicações de referência, com controle de cardinalidade.
+
+**Autorização limitada:** a Phase 2 pode ser concluída sob `continue-for-learning`, com a aplicação de referência e cenários mais representativos. A tese deve receber nova revisão explícita neste gate; a autorização não é `go` e não desbloqueia a Phase 3.
 
 ### Phase 3 — Deployment Intelligence
 
