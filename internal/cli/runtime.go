@@ -8,6 +8,7 @@ import (
 
 	"github.com/guijoazeiro/prodmap/internal/correlation"
 	"github.com/guijoazeiro/prodmap/internal/errs"
+	"github.com/guijoazeiro/prodmap/internal/identity"
 	"github.com/guijoazeiro/prodmap/internal/inventory"
 )
 
@@ -79,8 +80,19 @@ func (a *App) runRuntime(ctx context.Context, args []string) error {
 	if *limit < 1 || *limit > 1000 {
 		return fmt.Errorf("--limit must be between 1 and 1000: %w", errs.ErrInvalid)
 	}
-	var at time.Time
 	var err error
+	environmentSpecified := false
+	flags.Visit(func(item *flag.Flag) {
+		environmentSpecified = environmentSpecified || item.Name == "environment"
+	})
+	queryEnvironment := ""
+	if environmentSpecified {
+		queryEnvironment, err = identity.ValidEnvironment(*environment)
+		if err != nil {
+			return err
+		}
+	}
+	var at time.Time
 	if *atValue != "" {
 		at, err = parseRFC3339(*atValue, "--at")
 		if err != nil {
@@ -99,7 +111,11 @@ func (a *App) runRuntime(ctx context.Context, args []string) error {
 			return fmt.Errorf("Phase 1 source factories are unavailable: %w", errs.ErrUnavailable)
 		}
 		refreshOperationID := operationID()
-		result, refreshErr := (inventory.Refresher{OperationID: refreshOperationID, Runtime: a.RuntimeSource(), Commits: a.CommitSource(cfg.ProjectDir), Store: store}).Refresh(ctx)
+		refreshEnvironment := "default"
+		if environmentSpecified {
+			refreshEnvironment = queryEnvironment
+		}
+		result, refreshErr := (inventory.Refresher{OperationID: refreshOperationID, Environment: refreshEnvironment, Runtime: a.RuntimeSource(), Commits: a.CommitSource(cfg.ProjectDir), Store: store}).Refresh(ctx)
 		if refreshErr != nil {
 			return fmt.Errorf("refresh runtime: %w", refreshErr)
 		}
@@ -109,12 +125,13 @@ func (a *App) runRuntime(ctx context.Context, args []string) error {
 			ObservedAt:  result.ObservedAt.UTC().Format(time.RFC3339Nano), Processed: result.Processed,
 			Rejected: result.Rejected, Services: result.Services, RuntimeInstances: result.RuntimeInstances,
 		}
+		queryEnvironment = refreshEnvironment
 	}
 	if at.IsZero() {
 		at = a.Now().UTC()
 	}
 	items, nextCursor, err := store.Runtime(ctx, inventory.RuntimeQuery{
-		Service: *service, Environment: *environment, At: at, Limit: *limit, Cursor: *cursor,
+		Service: *service, Environment: queryEnvironment, At: at, Limit: *limit, Cursor: *cursor,
 	})
 	if err != nil {
 		return fmt.Errorf("query runtime: %w", err)

@@ -101,6 +101,55 @@ func TestContainerInspectTemplateHandlesOptionalHealth(t *testing.T) {
 	}
 }
 
+func TestImageInspectTemplateProjectsOnlyAllowlistedLabels(t *testing.T) {
+	for _, forbidden := range []string{"json .Config.Labels", "org.opencontainers.image.version", "com.example.secret", ".Config.Env", ".Mounts", "Health.Log"} {
+		if strings.Contains(imageInspectTemplate, forbidden) {
+			t.Fatalf("image projection requests forbidden field %q: %s", forbidden, imageInspectTemplate)
+		}
+	}
+	projection, err := template.New("image-inspect").Option("missingkey=error").Funcs(template.FuncMap{
+		"json": func(value any) (string, error) {
+			encoded, marshalErr := json.Marshal(value)
+			return string(encoded), marshalErr
+		},
+	}).Parse(imageInspectTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		title     any
+		wantTitle string
+	}{
+		{name: "title present", title: "checkout-api", wantTitle: "checkout-api"},
+		{name: "title absent", wantTitle: ""},
+		{name: "title null", title: nil, wantTitle: ""},
+		{name: "title empty", title: "", wantTitle: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			labels := map[string]any{"org.opencontainers.image.revision": nil, "org.opencontainers.image.source": nil, "org.opencontainers.image.created": nil, "com.example.secret": "must-not-leak"}
+			if test.name != "title absent" {
+				labels["org.opencontainers.image.title"] = test.title
+			}
+			input := map[string]any{"Id": imageA, "RepoDigests": []string{}, "RepoTags": []string{}, "Config": map[string]any{"Labels": labels, "Env": []string{"SECRET=must-not-leak"}}}
+			var rendered bytes.Buffer
+			if err := projection.Execute(&rendered, input); err != nil {
+				t.Fatal(err)
+			}
+			var decoded imageView
+			if err := decodeProjection(rendered.Bytes(), &decoded); err != nil {
+				t.Fatalf("projection is not valid JSON: %v\n%s", err, rendered.String())
+			}
+			if got := filterOCILabels(decoded.Labels)["org.opencontainers.image.title"]; got != test.wantTitle {
+				t.Fatalf("title=%q want=%q", got, test.wantTitle)
+			}
+			if strings.Contains(rendered.String(), "must-not-leak") {
+				t.Fatalf("projection leaked sensitive data: %s", rendered.String())
+			}
+		})
+	}
+}
+
 func TestInspectRuntimeIsDeterministicAndSanitizesMetadata(t *testing.T) {
 	fixed := time.Date(2026, 8, 19, 14, 30, 0, 123, time.FixedZone("test", -3*60*60))
 	runner := runnerFunc(func(_ context.Context, args ...string) ([]byte, error) {
@@ -128,7 +177,7 @@ func TestInspectRuntimeIsDeterministicAndSanitizesMetadata(t *testing.T) {
 			}
 			switch args[len(args)-1] {
 			case imageA:
-				return []byte(`{"id":"` + imageA + `","repo_digests":["registry.example/api@sha256:bbb","registry.example/api@sha256:aaa","registry.example/api@sha256:aaa"],"repo_tags":["registry.example/api:z","registry.example/api:a"],"labels":{"org.opencontainers.image.revision":"abcdef0123456789abcdef0123456789abcdef01","org.opencontainers.image.source":"https://example.invalid/repo","com.example.secret":"must-not-leak"}}`), nil
+				return []byte(`{"id":"` + imageA + `","repo_digests":["registry.example/api@sha256:bbb","registry.example/api@sha256:aaa","registry.example/api@sha256:aaa"],"repo_tags":["registry.example/api:z","registry.example/api:a"],"labels":{"org.opencontainers.image.title":"api","org.opencontainers.image.revision":"abcdef0123456789abcdef0123456789abcdef01","org.opencontainers.image.source":"https://example.invalid/repo","com.example.secret":"must-not-leak"}}`), nil
 			case imageB:
 				return []byte(`{"id":"` + imageB + `","repo_digests":null,"repo_tags":["registry.example/worker:v2"],"labels":{"org.opencontainers.image.version":"2.0.0","org.opencontainers.image.created":null}}`), nil
 			default:
@@ -174,8 +223,8 @@ func TestInspectRuntimeIsDeterministicAndSanitizesMetadata(t *testing.T) {
 	if _, exists := api.OCILabels["com.example.secret"]; exists {
 		t.Fatalf("non-allowlisted label leaked: %#v", api.OCILabels)
 	}
-	if len(api.OCILabels) != 2 {
-		t.Fatalf("OCILabels = %#v, want exactly two allowlisted values", api.OCILabels)
+	if len(api.OCILabels) != 3 || api.OCILabels["org.opencontainers.image.title"] != "api" {
+		t.Fatalf("OCILabels = %#v, want exactly three allowlisted values including title", api.OCILabels)
 	}
 	if api.StartedAt == nil || api.StartedAt.Location() != time.UTC {
 		t.Fatalf("StartedAt = %#v, want UTC timestamp", api.StartedAt)

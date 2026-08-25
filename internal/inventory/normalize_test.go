@@ -182,6 +182,39 @@ func TestNormalizeArtifactDiscardsUnsafeOptionalMetadataWithoutEcho(t *testing.T
 	}
 }
 
+func TestNormalizeOCITitleAndRuntimeIdentity(t *testing.T) {
+	validImageID := "sha256:" + strings.Repeat("a", 64)
+	tests := []struct {
+		name       string
+		title      string
+		wantTitle  string
+		wantIssues bool
+		wantKey    string
+		explicit   bool
+	}{
+		{name: "normalized title", title: " Checkout API ", wantTitle: "checkout-api", wantKey: "checkout-api", explicit: true},
+		{name: "empty title", title: "", wantKey: "api", explicit: false},
+		{name: "control title", title: "checkout\x00api", wantIssues: true, wantKey: "api", explicit: false},
+		{name: "oversized title", title: strings.Repeat("a", 256), wantIssues: true, wantKey: "api", explicit: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			observation := RuntimeObservation{ExternalID: "container", ImageReference: "registry.example/api:v1", ImageID: validImageID, OCILabels: map[string]string{ociTitleLabel: test.title}}
+			artifact, _ := NormalizeArtifact(observation)
+			if got := artifact.OCILabels[ociTitleLabel]; got != test.wantTitle {
+				t.Fatalf("title=%q want=%q", got, test.wantTitle)
+			}
+			if got := len(artifact.MetadataIssues) > 0; got != test.wantIssues {
+				t.Fatalf("issues=%v want=%t", artifact.MetadataIssues, test.wantIssues)
+			}
+			identity := resolveRuntimeServiceIdentity(observation, artifact)
+			if identity.LogicalKey != test.wantKey || identity.Explicit != test.explicit {
+				t.Fatalf("identity=%+v", identity)
+			}
+		})
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

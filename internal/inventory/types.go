@@ -74,6 +74,7 @@ type SnapshotItem struct {
 	ServiceLogicalKey  string
 	ServiceDisplayName string
 	Environment        string
+	RuntimeIdentity    RuntimeServiceIdentity
 	Runtime            RuntimeObservation
 	Artifact           Artifact
 	Commit             *Commit
@@ -138,16 +139,28 @@ type RuntimeRecord struct {
 }
 
 type ServiceRecord struct {
-	ID               string
-	LogicalKey       string
-	Environment      string
-	DisplayName      string
-	RuntimeInstances int
-	State            string
-	Health           string
-	ArtifactIdentity string
-	CommitConfidence correlation.Level
-	Freshness        time.Time
+	ID                 string
+	LogicalKey         string
+	Environment        string
+	DisplayName        string
+	RuntimeInstances   int
+	State              string
+	Health             string
+	ArtifactIdentity   string
+	CommitConfidence   correlation.Level
+	Freshness          time.Time
+	TelemetryObserved  bool
+	RuntimeAssociation RuntimeAssociation
+}
+
+type RuntimeAssociation struct {
+	Status              string
+	Confidence          correlation.Level
+	Basis               string
+	CurrentInstances    int
+	MatchedInstances    int
+	UnverifiedInstances int
+	Limitations         []string
 }
 
 type Status struct {

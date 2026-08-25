@@ -11,16 +11,28 @@ import (
 )
 
 type serviceOutput struct {
-	ID               string            `json:"id"`
-	LogicalKey       string            `json:"logical_key"`
-	Environment      string            `json:"environment"`
-	DisplayName      string            `json:"display_name"`
-	RuntimeInstances int               `json:"runtime_instances"`
-	State            string            `json:"state"`
-	Health           string            `json:"health"`
-	Artifact         *string           `json:"artifact"`
-	CommitConfidence correlation.Level `json:"commit_confidence"`
-	Freshness        string            `json:"freshness"`
+	ID                 string                   `json:"id"`
+	LogicalKey         string                   `json:"logical_key"`
+	Environment        string                   `json:"environment"`
+	DisplayName        string                   `json:"display_name"`
+	RuntimeInstances   int                      `json:"runtime_instances"`
+	State              string                   `json:"state"`
+	Health             string                   `json:"health"`
+	Artifact           *string                  `json:"artifact"`
+	CommitConfidence   correlation.Level        `json:"commit_confidence"`
+	Freshness          string                   `json:"freshness"`
+	TelemetryObserved  bool                     `json:"telemetry_observed"`
+	RuntimeAssociation runtimeAssociationOutput `json:"runtime_association"`
+}
+
+type runtimeAssociationOutput struct {
+	Status              string            `json:"status"`
+	Confidence          correlation.Level `json:"confidence"`
+	Basis               string            `json:"basis"`
+	CurrentInstances    int               `json:"current_instances"`
+	MatchedInstances    int               `json:"matched_instances"`
+	UnverifiedInstances int               `json:"unverified_instances"`
+	Limitations         []string          `json:"limitations"`
 }
 
 type servicesResult struct {
@@ -55,7 +67,8 @@ func (a *App) runServices(ctx context.Context, args []string) error {
 			ID: item.ID, LogicalKey: item.LogicalKey, Environment: item.Environment, DisplayName: item.DisplayName,
 			RuntimeInstances: item.RuntimeInstances, State: item.State, Health: normalizeUnknown(item.Health),
 			Artifact: pointer(item.ArtifactIdentity), CommitConfidence: item.CommitConfidence,
-			Freshness: item.Freshness.UTC().Format(time.RFC3339Nano),
+			Freshness: item.Freshness.UTC().Format(time.RFC3339Nano), TelemetryObserved: item.TelemetryObserved,
+			RuntimeAssociation: runtimeAssociationOutput{Status: item.RuntimeAssociation.Status, Confidence: item.RuntimeAssociation.Confidence, Basis: item.RuntimeAssociation.Basis, CurrentInstances: item.RuntimeAssociation.CurrentInstances, MatchedInstances: item.RuntimeAssociation.MatchedInstances, UnverifiedInstances: item.RuntimeAssociation.UnverifiedInstances, Limitations: nonNilStrings(item.RuntimeAssociation.Limitations)},
 		})
 	}
 	if *common.jsonOutput {
@@ -66,9 +79,9 @@ func (a *App) runServices(ctx context.Context, args []string) error {
 		return nil
 	}
 	for _, item := range result.Items {
-		fmt.Fprintf(a.Stdout, "%s (%s) environment=%s instances=%d state=%s health=%s artifact=%s commit=%s freshness=%s\n",
+		fmt.Fprintf(a.Stdout, "%s (%s) environment=%s instances=%d state=%s health=%s artifact=%s commit=%s freshness=%s runtime_association=%s/%s matched=%d unverified=%d\n",
 			item.DisplayName, item.ID, item.Environment, item.RuntimeInstances, item.State, item.Health,
-			displayOptional(item.Artifact), item.CommitConfidence, item.Freshness)
+			displayOptional(item.Artifact), item.CommitConfidence, item.Freshness, item.RuntimeAssociation.Status, item.RuntimeAssociation.Confidence, item.RuntimeAssociation.MatchedInstances, item.RuntimeAssociation.UnverifiedInstances)
 	}
 	return nil
 }

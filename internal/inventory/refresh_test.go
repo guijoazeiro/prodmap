@@ -88,6 +88,95 @@ func TestRefreshValidatesRequiredDependencies(t *testing.T) {
 	}
 }
 
+func TestRefreshUsesExplicitOCITitleAndConfiguredEnvironment(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	store := &captureStore{}
+	refresher := Refresher{
+		Environment: "reference",
+		Runtime: fakeRuntimeSource{batch: RuntimeBatch{ObservedAt: now, Observations: []RuntimeObservation{{
+			ExternalID: "checkout", ImageReference: "registry.example/not-the-service:v1", ImageID: "sha256:" + strings.Repeat("a", 64),
+			OCILabels: map[string]string{ociTitleLabel: " Checkout API "}, ObservedAt: now,
+		}}}},
+		Store: store,
+	}
+	if _, err := refresher.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	item := store.snapshot.Items[0]
+	if item.Environment != "reference" || item.ServiceLogicalKey != "checkout-api" || !item.RuntimeIdentity.Explicit || item.RuntimeIdentity.Basis != "oci_image_title" {
+		t.Fatalf("snapshot item=%+v", item)
+	}
+}
+
+func TestRefreshEnvironmentValidationAndDefault(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	batch := RuntimeBatch{ObservedAt: now, Observations: []RuntimeObservation{{ExternalID: "api", ImageReference: "api:v1", ImageID: "sha256:" + strings.Repeat("a", 64), ObservedAt: now}}}
+	for _, test := range []struct {
+		name, environment string
+		wantErr           bool
+		wantEnvironment   string
+	}{
+		{name: "default", wantEnvironment: "default"},
+		{name: "control", environment: "reference\x00", wantErr: true},
+		{name: "oversized", environment: strings.Repeat("a", 129), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &captureStore{}
+			_, err := (Refresher{Environment: test.environment, Runtime: fakeRuntimeSource{batch: batch}, Store: store}).Refresh(context.Background())
+			if test.wantErr {
+				if !errors.Is(err, errs.ErrInvalid) {
+					t.Fatalf("error=%v", err)
+				}
+				return
+			}
+			if err != nil || store.snapshot.Items[0].Environment != test.wantEnvironment {
+				t.Fatalf("error=%v snapshot=%+v", err, store.snapshot)
+			}
+		})
+	}
+}
+
+func TestRefreshDiscardsInvalidOCITitleWithSanitizedWarning(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	secret := "secret-title-never-leak"
+	store := &captureStore{}
+	_, err := (Refresher{Runtime: fakeRuntimeSource{batch: RuntimeBatch{ObservedAt: now, Observations: []RuntimeObservation{{
+		ExternalID: "api", ImageReference: "api:v1", ImageID: "sha256:" + strings.Repeat("a", 64), OCILabels: map[string]string{ociTitleLabel: secret + "\x00"}, ObservedAt: now,
+	}}}}, Store: store}).Refresh(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := store.snapshot.Items[0]
+	if item.ServiceLogicalKey != "api" || item.RuntimeIdentity.Explicit || item.RuntimeIdentity.Basis != "image_reference_fallback" || item.Correlation.Level != correlation.LevelUnknown {
+		t.Fatalf("snapshot=%+v", store.snapshot)
+	}
+	if warningCount := countString(store.snapshot.Warnings, issueInvalidOCITitle); warningCount != 1 {
+		t.Fatalf("invalid OCI title warnings=%d warnings=%+v", warningCount, store.snapshot.Warnings)
+	}
+	for _, evidence := range item.Correlation.Evidence {
+		if strings.Contains(evidence.Claim, issueInvalidOCITitle) {
+			t.Fatalf("invalid OCI title leaked into provenance evidence: %+v", evidence)
+		}
+	}
+	encoded, marshalErr := json.Marshal(store.snapshot)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if strings.Contains(string(encoded), secret) {
+		t.Fatalf("raw title leaked into snapshot: %s", encoded)
+	}
+}
+
+func countString(values []string, want string) int {
+	count := 0
+	for _, value := range values {
+		if value == want {
+			count++
+		}
+	}
+	return count
+}
+
 func TestRefreshDistinguishesNotFoundFromUnavailableGit(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	sha := strings.Repeat("a", 40)

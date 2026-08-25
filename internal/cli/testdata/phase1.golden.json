@@ -109,8 +109,18 @@
           "health": "healthy",
           "id": "\u003cuuid\u003e",
           "logical_key": "api",
+          "runtime_association": {
+            "basis": "no telemetry observation",
+            "confidence": "UNKNOWN",
+            "current_instances": 1,
+            "limitations": [],
+            "matched_instances": 0,
+            "status": "UNKNOWN",
+            "unverified_instances": 1
+          },
           "runtime_instances": 1,
-          "state": "running"
+          "state": "running",
+          "telemetry_observed": false
         }
       ]
     },
