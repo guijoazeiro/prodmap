@@ -48,7 +48,7 @@ A hipótese do produto é:
 
 > Contexto de produção previamente correlacionado permite que pessoas e agentes diagnostiquem problemas com mais rapidez, precisão e menos exploração do que o acesso bruto e separado a logs, métricas e traces.
 
-O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo. A Foundation e um protótipo estritamente limitado ao necessário para produzir o pacote do experimento PODEM ser construídos antes da decisão, como investimento de validação; isso não constitui evidência de `go` nem autoriza Phase 2 ou posteriores.
+O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo. Antes da decisão formal, somente a Foundation, os protótipos explicitamente autorizados para o experimento e a conclusão limitada da Phase 2 autorizada pela [Decision 001](decisions/001-directional-pilot-continuation.md) PODEM avançar como investimento de validação ou aprendizado de produto. Isso não constitui `go`, não valida a tese e não autoriza qualquer fase além da Phase 2.
 
 ### 2.1 Experimento 001 — correlação versus contexto bruto
 
@@ -697,7 +697,7 @@ Entregas:
 
 **Gate:** ganho consistente e mensurável, ou uma tese revisada que justifique continuar.
 
-**Exceção de validação:** Phase 0 e, quando autorizado explicitamente, o menor protótipo da Phase 1 necessário ao Experimento 001 podem avançar antes deste gate. Essa exceção não valida a tese, não autoriza expansão do roadmap e não substitui a decisão documentada `go`, `pivot` ou `stop`.
+**Exceção de validação:** Phase 0, o menor protótipo da Phase 1, a Phase 2A e a conclusão limitada da Phase 2 podem avançar antes deste gate somente sob autorização explícita para preparar e aprender com o Experimento 001. A autorização vigente é [`continue-for-learning`](decisions/001-directional-pilot-continuation.md): um investimento interno limitado, distinto de `go`, `pivot` e `stop`. Ela não valida a tese, termina no gate da Phase 2, exige uso da aplicação de referência e nova revisão explícita da tese ao final da Phase 2. A Phase 3 permanece bloqueada.
 
 ### Phase 0 — Foundation
 
@@ -743,6 +743,19 @@ sem metadata de commit            → UNKNOWN
 
 **Gate:** executar a vertical slice ponta a ponta, identificar de forma confiável o que está rodando e admitir `UNKNOWN` quando a proveniência não puder ser determinada. Entidades de OTel, graph, baseline e regression não devem virar tabelas antes desse gate.
 
+### Phase 2A — OTel Validation Slice (exceção experimental)
+
+**Objetivo:** produzir somente o componente topológico reprodutível necessário ao pacote correlacionado do Experimento 001.
+
+Entregas limitadas:
+
+- ingestão offline de traces OTLP JSONL congelados;
+- serviços, endpoints, dependências `OBSERVED` e agregados temporais limitados;
+- persistência local e consulta `graph`;
+- starter opcional e versionado do OTel Collector.
+
+Métricas e logs OTLP, receiver vivo, deployments, baseline, regression, export genérico e MCP permanecem fora. A conclusão da slice não constitui `go`; a conclusão limitada da Phase 2 somente é permitida sob `continue-for-learning` e termina no seu gate.
+
 ### Phase 2 — Production Graph
 
 **Objetivo:** mapear comportamento observado.
@@ -756,6 +769,8 @@ Entregas:
 - `graph` e contexto de serviço/endpoint.
 
 **Gate:** grafo reprodutível em aplicações de referência, com controle de cardinalidade.
+
+**Autorização limitada:** a Phase 2 pode ser concluída sob `continue-for-learning`, com a aplicação de referência e cenários mais representativos. A tese deve receber nova revisão explícita neste gate; a autorização não é `go` e não desbloqueia a Phase 3.
 
 ### Phase 3 — Deployment Intelligence
 

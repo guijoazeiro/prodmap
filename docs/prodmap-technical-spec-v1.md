@@ -327,6 +327,18 @@ Critérios de aceite:
 - a correção do erro causa recuperação automática;
 - encerrar o watcher não deixa processo do Prodmap em execução; `.tmp/` permanece descartável e ignorado caso o terminal force o encerramento antes da limpeza do Air.
 
+## ADRs 015–017 — Exceção e contratos da Phase 2A
+
+**Status:** aceitos para a slice de validação
+
+As decisões executáveis estão registradas separadamente para manter o escopo explícito:
+
+- [`ADR-015`](adr/015-phase-2a-experimental-exception.md): Phase 2A e a continuação limitada da Phase 2 para preparar e aprender com o Experimento 001;
+- [`ADR-016`](adr/016-otel-ingestion-format.md): OTLP/JSON canônico congelado, parser oficial e ausência de receiver vivo;
+- [`ADR-017`](adr/017-topology-identity-cardinality.md): identidades, confidence, janelas, allowlists e limites de cardinalidade.
+
+Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go`, exige nova revisão da tese ao final da Phase 2 e mantém a Phase 3 bloqueada.
+
 ---
 
 # Parte II — Schema conceitual do domínio
@@ -1332,10 +1344,9 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 
 - driver SQLite e biblioteca de migração;
 - framework CLI, se algum;
-- formato exato de ingestão OTel;
 - tamanho padrão das janelas e thresholds por métrica;
 - função de decaimento temporal;
-- normalização de nomes de serviços;
+- extensões futuras da normalização de nomes de serviços além da regra fechada da Phase 2A;
 - estratégia de compactação e retenção;
 - formato do investigation package;
 - transporte do servidor MCP;
@@ -1348,7 +1359,7 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 ## 27. Ordem recomendada de implementação
 
 ```text
-0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation e o protótipo mínimo usado para produzir o pacote experimental podem anteceder a decisão sem representar `go`
+0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation, o protótipo mínimo da Phase 1, a Phase 2A e a conclusão limitada da Phase 2 usada para produzir e aprender com o pacote experimental podem anteceder a decisão sem representar `go`; a continuação é `continue-for-learning`, termina no gate da Phase 2 e mantém a Phase 3 bloqueada
 1. materializar somente os ADRs necessários para Phase 0/1
 2. criar o esqueleto mínimo por capacidades
 3. implementar tipos fundamentais: IDs, tempo, enums e erros
@@ -1360,8 +1371,8 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 9. cobrir EXACT, LOW/ambíguo e UNKNOWN com fixtures
 10. entregar init, doctor, runtime e explain
 11. avaliar a arquitetura com o código e uso reais
-12. somente então iniciar OTel e Production Graph
-13. depois implementar DeploymentSource e GitHub
+12. executar a Phase 2A offline e concluir a Production Graph somente sob `continue-for-learning`, com a aplicação de referência; revisar explicitamente a tese no gate da Phase 2 antes de qualquer avanço para a Phase 3
+13. somente após nova decisão explícita que autorize a Phase 3, implementar DeploymentSource e GitHub
 14. implementar Baseline, BehaviorChange e RegressionCandidate
 15. validar com corpus de falsos positivos
 16. implementar export e, somente depois, MCP
@@ -1397,7 +1408,7 @@ apenas tag mutável                → LOW
 sem metadata de commit            → UNKNOWN
 ```
 
-Somente após essa slice funcionar ponta a ponta será permitido expandir o schema para OTel, grafo, baseline e regressão.
+Somente após essa slice funcionar ponta a ponta será permitido expandir o schema. Sob `continue-for-learning`, a Phase 2 pode incluir OTel offline, grafo observado, agregados temporais limitados, integração entre runtime inventory e serviços observados somente mediante evidência, consultas temporais, controle de cardinalidade e validação com a aplicação de referência. Deployments, baseline, regression, métricas e logs OTLP, receiver vivo, MCP e a Phase 3 permanecem bloqueados. A tese deve ser revisada no gate da Phase 2, e a Phase 3 permanece bloqueada até nova decisão explícita.
 
 ---
 

@@ -223,12 +223,27 @@ func NormalizeServiceKey(observation RuntimeObservation) string {
 	if colon := strings.LastIndexByte(base, ':'); colon >= 0 {
 		base = base[:colon]
 	}
-	base = normalizeLogicalKey(base)
+	base = NormalizeServiceLogicalKey(base, "")
 	if base != "" {
 		return base
 	}
 	digest := sha256.Sum256([]byte(observation.ExternalID))
 	return "container-" + hex.EncodeToString(digest[:6])
+}
+
+// NormalizeServiceLogicalKey applies the single logical-service identity policy
+// shared by runtime inventory and telemetry. Namespace is a stable identity
+// component when present; an empty namespace is equivalent to no namespace.
+func NormalizeServiceLogicalKey(name, namespace string) string {
+	name = normalizeLogicalKey(name)
+	namespace = normalizeLogicalKey(namespace)
+	if name == "" {
+		return ""
+	}
+	if namespace == "" {
+		return name
+	}
+	return normalizeLogicalKey(namespace + "." + name)
 }
 
 func normalizeLogicalKey(value string) string {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,11 +61,19 @@ func NewApp(stdout, stderr io.Writer, buildInfo BuildInfo) *App {
 // Run executes one CLI invocation and returns its process exit code.
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain> [flags]")
+		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph> [flags]")
 		return ExitCode(errs.ErrInvalid)
+	}
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprintln(a.Stdout, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph> [flags]")
+		return 0
 	}
 
 	command := args[0]
+	publicCommand := command
+	if command == "telemetry" && len(args) > 1 && args[1] == "ingest" {
+		publicCommand = "telemetry ingest"
+	}
 	jsonRequested := containsJSONFlag(args[1:])
 	var err error
 	switch command {
@@ -82,6 +91,10 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		err = a.runRuntime(ctx, args[1:])
 	case "explain":
 		err = a.runExplain(ctx, args[1:])
+	case "telemetry":
+		err = a.runTelemetry(ctx, args[1:])
+	case "graph":
+		err = a.runGraph(ctx, args[1:])
 	default:
 		err = fmt.Errorf("unknown command %q: %w", command, errs.ErrInvalid)
 	}
@@ -99,14 +112,14 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		if errors.As(err, &ambiguous) {
 			payload.Details = map[string]any{"candidates": nonNilSelectorCandidates(ambiguous.Candidates)}
 		}
-		if writeErr := WriteError(a.Stdout, command, a.Now(), payload); writeErr != nil {
+		if writeErr := WriteError(a.Stdout, publicCommand, a.Now(), payload); writeErr != nil {
 			fmt.Fprintf(a.Stderr, "write JSON error: %v\n", writeErr)
 			return 1
 		}
 	} else {
 		var ambiguous *inventory.AmbiguousSelectorError
 		if errors.As(err, &ambiguous) {
-			fmt.Fprintln(a.Stderr, "explain target is ambiguous; choose one candidate:")
+			fmt.Fprintln(a.Stderr, "target is ambiguous; choose one candidate:")
 			for _, candidate := range nonNilSelectorCandidates(ambiguous.Candidates) {
 				fmt.Fprintf(a.Stderr, "  %s %s", candidate.Type, candidate.ID)
 				if candidate.DisplayLabel != "" {
@@ -169,9 +182,6 @@ func (a *App) parseCommandFlags(flags *flag.FlagSet, args []string) (bool, error
 			return false, writeErr
 		}
 		return true, nil
-	}
-	if _, writeErr := a.Stderr.Write(output.Bytes()); writeErr != nil {
-		return false, writeErr
 	}
 	return false, err
 }
@@ -240,12 +250,23 @@ func processEnvironment() map[string]string {
 }
 
 func containsJSONFlag(args []string) bool {
+	requested := false
 	for _, arg := range args {
-		if arg == "--json" || arg == "-json" || strings.HasPrefix(arg, "--json=") {
-			return true
+		if arg == "--" {
+			break
+		}
+		if arg == "--json" || arg == "-json" {
+			requested = true
+			continue
+		}
+		if key, value, ok := strings.Cut(arg, "="); ok && (key == "--json" || key == "-json") {
+			parsed, err := strconv.ParseBool(value)
+			if err == nil {
+				requested = parsed
+			}
 		}
 	}
-	return false
+	return requested
 }
 
 type renderedError struct{ err error }
