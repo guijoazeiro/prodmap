@@ -1,6 +1,6 @@
 # ADR-015 — Phase 2A as an experimental exception
 
-Status: accepted for Experiment 001 preparation
+Status: accepted; bounded Phase 2 continuation authorized by Decision 001
 
 Phase 2A is authorized to make the topology component needed by Experiment 001 reproducible. [`Decision 001`](../decisions/001-directional-pilot-continuation.md) additionally authorizes a bounded `continue-for-learning` completion of Phase 2 for product learning with the reference application. Neither authorization is evidence for, or replaces, the pre-registered `go`, `pivot`, or `stop` decision. The authorization ends at the Phase 2 gate; Phase 3 remains blocked pending a new explicit decision.
 

@@ -48,7 +48,7 @@ A hipótese do produto é:
 
 > Contexto de produção previamente correlacionado permite que pessoas e agentes diagnostiquem problemas com mais rapidez, precisão e menos exploração do que o acesso bruto e separado a logs, métricas e traces.
 
-O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo. A Foundation e protótipos explicitamente autorizados, estritamente limitados ao necessário para produzir o pacote do experimento, PODEM ser construídos antes da decisão como investimento de validação; isso não constitui evidência de `go` nem autoriza o roadmap completo.
+O principal risco é de tese, não de implementação. Um agente competente, com acesso direto às fontes, talvez produza um diagnóstico equivalente sem precisar do Prodmap. Por isso, a validação dessa hipótese é a primeira fase do projeto e uma condição para investir no roadmap completo. Antes da decisão formal, somente a Foundation, os protótipos explicitamente autorizados para o experimento e a conclusão limitada da Phase 2 autorizada pela [Decision 001](decisions/001-directional-pilot-continuation.md) PODEM avançar como investimento de validação ou aprendizado de produto. Isso não constitui `go`, não valida a tese e não autoriza qualquer fase além da Phase 2.
 
 ### 2.1 Experimento 001 — correlação versus contexto bruto
 
