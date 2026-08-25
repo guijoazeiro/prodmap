@@ -65,11 +65,11 @@ Phase 1 adds a local, read-only Docker-to-Git provenance slice:
 ./bin/prodmap explain <runtime-or-artifact-or-commit-or-correlation-id>
 ```
 
-Each command also accepts `--json`. `runtime` supports `--service`, `--environment`, `--at`, `--limit`, and `--cursor`; `explain` supports `--detail summary|full` and `--at`. A refresh uses only local, read-only `docker ps`, container/image inspection, and Git metadata commands. It never pulls images, contacts Git remotes, checks out commits, or mutates containers. Only the OCI `revision`, `source`, and `created` annotations cross the Docker boundary; `version`, raw inspect payloads, environment variables, mounts, health logs, and all other labels are discarded.
+Each command also accepts `--json`. `runtime` supports `--service`, `--environment`, `--at`, `--limit`, and `--cursor`; `explain` supports `--detail summary|full` and `--at`. A refresh uses only local, read-only `docker ps`, container/image inspection, and Git metadata commands. It never pulls images, contacts Git remotes, checks out commits, or mutates containers. Only the OCI `title`, `revision`, `source`, and `created` annotations cross the Docker boundary; `version`, raw inspect payloads, environment variables, mounts, health logs, and all other labels are discarded.
 
 The prototype derives a service logical key from the normalized image repository name, not from the container name. Artifact identity prefers a validated `sha256` or `sha512` repository digest, then a validated immutable local image ID, and only then a mutable tag. OCI revision metadata can produce an `EXACT` correlation only when the artifact identity is immutable, the complete SHA resolves locally, and no identity or temporal contradiction exists. Missing or ambiguous data remains `LOW` or `UNKNOWN` and is retained in the evidence explanation.
 
-Phase 1 deliberately has no OpenTelemetry, deployment intelligence, production graph, Kubernetes, or remote source integrations. Runtime disappearance is not interpreted as removal, freshness uses a provisional five-minute local threshold, and the `default` environment is used until environment mapping is introduced in a later phase.
+Runtime disappearance is not interpreted as removal and freshness uses a provisional five-minute local threshold. Without an explicit refresh environment, runtime inventory uses `default`.
 
 ## Phase 2A experimental validation slice
 
@@ -91,6 +91,19 @@ An explicitly authorized, bounded exception prepares the topology input for Expe
 The input is one official OTLP `ExportTraceServiceRequest` JSON message per line. Parsing and redaction finish before a database transaction begins. Every edge is `OBSERVED`, never `EXACT`; missing destination data creates no edge. The optional pinned Collector starter and shutdown instructions are in [`deploy/otel-collector`](deploy/otel-collector/README.md). A manual smoke test is documented in [`docs/phase-2a-smoke-test.md`](docs/phase-2a-smoke-test.md).
 
 The versioned JSON contract examples are in [`docs/phase-2a-json-examples.md`](docs/phase-2a-json-examples.md).
+
+## Runtime and observed-service evidence
+
+Use the same environment for Docker inventory and frozen telemetry:
+
+```bash
+./bin/prodmap runtime --refresh --environment reference
+./bin/prodmap telemetry ingest --file traces.otlp.jsonl --environment reference \
+  --window-start 2026-08-19T12:00:00Z --window-end 2026-08-19T12:01:00Z
+./bin/prodmap services --json
+```
+
+`services` reports `telemetry_observed` and `runtime_association`. An association is `MATCHED/HIGH` only when the allowlisted OCI image title and normalized OTel service identity match exactly in the same environment. The title is not secret, but arbitrary labels remain blocked. Without a title, association is `UNKNOWN`; image references, container names, and fuzzy matching are not evidence. Runtime association does not establish causality and is never `EXACT`.
 
 Metrics/logs ingestion, a live receiver in Prodmap, deployments, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 

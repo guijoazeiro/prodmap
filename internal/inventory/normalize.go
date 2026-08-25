@@ -12,6 +12,7 @@ import (
 
 const (
 	ociRevisionLabel = "org.opencontainers.image.revision"
+	ociTitleLabel    = "org.opencontainers.image.title"
 	ociSourceLabel   = "org.opencontainers.image.source"
 	ociVersionLabel  = "org.opencontainers.image.version"
 	ociCreatedLabel  = "org.opencontainers.image.created"
@@ -22,9 +23,13 @@ const (
 	issueInvalidOCISource  = "OCI source metadata could not be safely canonicalized and was discarded"
 	issueDiscardedVersion  = "OCI version metadata is not retained by the Phase 1 safety policy"
 	issueInvalidOCICreated = "OCI creation timestamp was invalid and was discarded"
+	issueInvalidOCITitle   = "OCI image title metadata was invalid and was discarded"
 )
 
-const maxOCISourceLength = 2048
+const (
+	maxOCISourceLength = 2048
+	maxOCITitleBytes   = 255
+)
 
 type normalizedDigest struct {
 	name      string
@@ -150,6 +155,14 @@ func normalizeOCILabels(values map[string]string) (map[string]string, []string, 
 	issues := make([]string, 0, 3)
 	revisionInvalid := false
 
+	if raw, exists := values[ociTitleLabel]; exists && raw != "" {
+		if title, ok := normalizeOCITitle(raw); ok {
+			result[ociTitleLabel] = title
+		} else {
+			issues = append(issues, issueInvalidOCITitle)
+		}
+	}
+
 	if raw, exists := values[ociRevisionLabel]; exists {
 		value := strings.TrimSpace(raw)
 		if value != "" {
@@ -184,6 +197,17 @@ func normalizeOCILabels(values map[string]string) (map[string]string, []string, 
 	}
 
 	return result, uniqueSorted(issues), revisionInvalid
+}
+
+func normalizeOCITitle(raw string) (string, bool) {
+	if len(raw) > maxOCITitleBytes || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return "", false
+	}
+	logicalKey := NormalizeServiceLogicalKey(raw, "")
+	if logicalKey == "" || len(logicalKey) > maxOCITitleBytes {
+		return "", false
+	}
+	return logicalKey, true
 }
 
 func canonicalizeOCISource(raw string) (string, bool) {
@@ -229,6 +253,23 @@ func NormalizeServiceKey(observation RuntimeObservation) string {
 	}
 	digest := sha256.Sum256([]byte(observation.ExternalID))
 	return "container-" + hex.EncodeToString(digest[:6])
+}
+
+// RuntimeServiceIdentity distinguishes an explicit OCI service identity from
+// the operational fallback used to keep Phase 1 inventory useful.
+type RuntimeServiceIdentity struct {
+	LogicalKey  string
+	DisplayName string
+	Basis       string
+	Explicit    bool
+}
+
+func resolveRuntimeServiceIdentity(observation RuntimeObservation, artifact Artifact) RuntimeServiceIdentity {
+	if title := artifact.OCILabels[ociTitleLabel]; title != "" {
+		return RuntimeServiceIdentity{LogicalKey: title, DisplayName: title, Basis: "oci_image_title", Explicit: true}
+	}
+	fallback := NormalizeServiceKey(observation)
+	return RuntimeServiceIdentity{LogicalKey: fallback, DisplayName: fallback, Basis: "image_reference_fallback"}
 }
 
 // NormalizeServiceLogicalKey applies the single logical-service identity policy

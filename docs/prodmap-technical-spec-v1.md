@@ -327,7 +327,7 @@ Critérios de aceite:
 - a correção do erro causa recuperação automática;
 - encerrar o watcher não deixa processo do Prodmap em execução; `.tmp/` permanece descartável e ignorado caso o terminal force o encerramento antes da limpeza do Air.
 
-## ADRs 015–017 — Exceção e contratos da Phase 2A
+## ADRs 015–018 — Exceção e contratos da Phase 2
 
 **Status:** aceitos para a slice de validação
 
@@ -336,6 +336,7 @@ As decisões executáveis estão registradas separadamente para manter o escopo 
 - [`ADR-015`](adr/015-phase-2a-experimental-exception.md): Phase 2A e a continuação limitada da Phase 2 para preparar e aprender com o Experimento 001;
 - [`ADR-016`](adr/016-otel-ingestion-format.md): OTLP/JSON canônico congelado, parser oficial e ausência de receiver vivo;
 - [`ADR-017`](adr/017-topology-identity-cardinality.md): identidades, confidence, janelas, allowlists e limites de cardinalidade.
+- [`ADR-018`](adr/018-runtime-observed-service-association.md): associação explícita entre runtime e serviço observado no mesmo environment.
 
 Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go`, exige nova revisão da tese ao final da Phase 2 e mantém a Phase 3 bloqueada.
 

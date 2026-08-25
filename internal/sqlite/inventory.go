@@ -629,7 +629,27 @@ func (s *Store) Status(ctx context.Context) (inventory.Status, error) {
 }
 
 func (s *Store) Services(ctx context.Context) ([]inventory.ServiceRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id,s.logical_key,s.environment,s.display_name,COUNT(r.id),CASE WHEN COUNT(DISTINCT r.state)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.state)=1 THEN MIN(r.state) ELSE 'mixed' END,CASE WHEN COUNT(DISTINCT r.health)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.health)=1 THEN MIN(r.health) ELSE 'mixed' END,CASE WHEN COUNT(DISTINCT a.identity)=1 THEN MIN(a.identity) ELSE '' END,COALESCE(MIN(CASE c.level WHEN 'UNKNOWN' THEN 0 WHEN 'LOW' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'HIGH' THEN 3 WHEN 'EXACT' THEN 4 ELSE 0 END),0),s.last_seen_at FROM services s LEFT JOIN runtime_instances r ON r.service_id=s.id AND r.valid_to IS NULL LEFT JOIN artifacts a ON a.id=r.artifact_id LEFT JOIN correlations c ON c.runtime_id=r.id AND c.is_current=1 AND c.algorithm_version=? GROUP BY s.id ORDER BY s.environment,s.logical_key`, correlation.AlgorithmVersion)
+	rows, err := s.db.QueryContext(ctx, `WITH telemetry_services(service_id) AS (
+		SELECT service_id FROM endpoints
+		UNION SELECT service_id FROM telemetry_windows
+		UNION SELECT from_service_id FROM service_dependency_observations
+		UNION SELECT target_service_id FROM service_dependency_observations WHERE target_service_id IS NOT NULL
+	)
+	SELECT s.id,s.logical_key,s.environment,s.display_name,COUNT(r.id),
+		CASE WHEN COUNT(DISTINCT r.state)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.state)=1 THEN MIN(r.state) ELSE 'mixed' END,
+		CASE WHEN COUNT(DISTINCT r.health)=0 THEN 'unknown' WHEN COUNT(DISTINCT r.health)=1 THEN MIN(r.health) ELSE 'mixed' END,
+		CASE WHEN COUNT(DISTINCT a.identity)=1 THEN MIN(a.identity) ELSE '' END,
+		COALESCE(MIN(CASE c.level WHEN 'UNKNOWN' THEN 0 WHEN 'LOW' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'HIGH' THEN 3 WHEN 'EXACT' THEN 4 ELSE 0 END),0),
+		s.last_seen_at,
+		CASE WHEN ts.service_id IS NULL THEN 0 ELSE 1 END,
+		COALESCE(SUM(CASE WHEN json_extract(a.oci_labels_json, '$."org.opencontainers.image.title"')=s.logical_key THEN 1 ELSE 0 END),0)
+	FROM services s
+	LEFT JOIN telemetry_services ts ON ts.service_id=s.id
+	LEFT JOIN runtime_instances r ON r.service_id=s.id AND r.valid_to IS NULL
+	LEFT JOIN artifacts a ON a.id=r.artifact_id
+	LEFT JOIN correlations c ON c.runtime_id=r.id AND c.is_current=1 AND c.algorithm_version=?
+	GROUP BY s.id
+	ORDER BY s.environment,s.logical_key`, correlation.AlgorithmVersion)
 	if err != nil {
 		return nil, fmt.Errorf("%w: list services: %w", errs.ErrUnavailable, err)
 	}
@@ -639,10 +659,14 @@ func (s *Store) Services(ctx context.Context) ([]inventory.ServiceRecord, error)
 		var item inventory.ServiceRecord
 		var confidenceRank int
 		var freshness string
-		if err := rows.Scan(&item.ID, &item.LogicalKey, &item.Environment, &item.DisplayName, &item.RuntimeInstances, &item.State, &item.Health, &item.ArtifactIdentity, &confidenceRank, &freshness); err != nil {
+		var telemetryObserved int
+		var matchedInstances int
+		if err := rows.Scan(&item.ID, &item.LogicalKey, &item.Environment, &item.DisplayName, &item.RuntimeInstances, &item.State, &item.Health, &item.ArtifactIdentity, &confidenceRank, &freshness, &telemetryObserved, &matchedInstances); err != nil {
 			return nil, fmt.Errorf("%w: scan service: %w", errs.ErrUnavailable, err)
 		}
 		item.CommitConfidence = confidenceFromRank(confidenceRank)
+		item.TelemetryObserved = telemetryObserved != 0
+		item.RuntimeAssociation = runtimeAssociation(item.TelemetryObserved, item.RuntimeInstances, matchedInstances)
 		item.Freshness, err = parseTime(freshness)
 		if err != nil {
 			return nil, err
@@ -650,6 +674,30 @@ func (s *Store) Services(ctx context.Context) ([]inventory.ServiceRecord, error)
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+const runtimeAssociationBasis = "allowlisted OCI image title matches OTel service identity in the same environment"
+
+func runtimeAssociation(telemetryObserved bool, currentInstances, matchedInstances int) inventory.RuntimeAssociation {
+	association := inventory.RuntimeAssociation{CurrentInstances: currentInstances, MatchedInstances: matchedInstances, Limitations: []string{}}
+	association.UnverifiedInstances = currentInstances - matchedInstances
+	if association.UnverifiedInstances < 0 {
+		association.UnverifiedInstances = 0
+	}
+	switch {
+	case !telemetryObserved:
+		association.Status, association.Confidence, association.Basis = "UNKNOWN", correlation.LevelUnknown, "no telemetry observation"
+	case currentInstances == 0:
+		association.Status, association.Confidence, association.Basis = "UNKNOWN", correlation.LevelUnknown, "no current runtime evidence"
+	case matchedInstances == currentInstances:
+		association.Status, association.Confidence, association.Basis = "MATCHED", correlation.LevelHigh, runtimeAssociationBasis
+	case matchedInstances > 0:
+		association.Status, association.Confidence, association.Basis = "PARTIAL", correlation.LevelHigh, runtimeAssociationBasis
+		association.Limitations = []string{"Only a subset of current runtime instances has explicit allowlisted OCI image title evidence."}
+	default:
+		association.Status, association.Confidence, association.Basis = "UNKNOWN", correlation.LevelUnknown, "runtime identity lacks allowlisted OCI title evidence"
+	}
+	return association
 }
 
 func confidenceFromRank(rank int) correlation.Level {

@@ -11,10 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/guijoazeiro/prodmap/internal/errs"
+	"github.com/guijoazeiro/prodmap/internal/identity"
 	"github.com/guijoazeiro/prodmap/internal/topology"
 )
 
@@ -213,14 +213,5 @@ func NearestRank(values []int64, percentile float64) int64 {
 }
 
 func ValidEnvironment(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
-		return "", fmt.Errorf("%w: environment must contain 1..128 characters", errs.ErrInvalid)
-	}
-	for _, r := range value {
-		if r < 0x20 || r == 0x7f {
-			return "", fmt.Errorf("%w: environment contains control characters", errs.ErrInvalid)
-		}
-	}
-	return value, nil
+	return identity.ValidEnvironment(value)
 }

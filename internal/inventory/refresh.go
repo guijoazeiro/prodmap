@@ -17,6 +17,7 @@ var fullSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$`)
 
 type Refresher struct {
 	OperationID string
+	Environment string
 	Runtime     RuntimeSource
 	Commits     CommitSource
 	Store       SnapshotStore
@@ -26,6 +27,14 @@ type Refresher struct {
 func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 	if r.Runtime == nil || r.Store == nil {
 		return RefreshResult{}, fmt.Errorf("%w: runtime source and snapshot store are required", errs.ErrInvalid)
+	}
+	environment := "default"
+	if r.Environment != "" {
+		var environmentErr error
+		environment, environmentErr = identity.ValidEnvironment(r.Environment)
+		if environmentErr != nil {
+			return RefreshResult{}, environmentErr
+		}
 	}
 	refreshOperationID := strings.TrimSpace(r.OperationID)
 	if refreshOperationID == "" {
@@ -86,6 +95,7 @@ func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 		}
 
 		artifact, identityConflict := NormalizeArtifact(observation)
+		runtimeIdentity := resolveRuntimeServiceIdentity(observation, artifact)
 		input := correlation.ProvenanceInput{
 			ImmutableIdentity: artifact.Identity,
 			MutableAlias:      artifact.ObservedReference,
@@ -99,6 +109,10 @@ func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 			input.ImmutableIdentity = ""
 		}
 		for _, issue := range artifact.MetadataIssues {
+			if issue == issueInvalidOCITitle {
+				snapshot.Warnings = append(snapshot.Warnings, issue)
+				continue
+			}
 			if issue == issueInvalidOCICreated {
 				input.ImageCreatedInvalid = true
 				continue
@@ -158,9 +172,10 @@ func (r Refresher) Refresh(ctx context.Context) (RefreshResult, error) {
 			sanitizedRuntime.OCILabels[key] = value
 		}
 		snapshot.Items = append(snapshot.Items, SnapshotItem{
-			ServiceLogicalKey:  NormalizeServiceKey(observation),
-			ServiceDisplayName: NormalizeServiceKey(observation),
-			Environment:        "default",
+			ServiceLogicalKey:  runtimeIdentity.LogicalKey,
+			ServiceDisplayName: runtimeIdentity.DisplayName,
+			Environment:        environment,
+			RuntimeIdentity:    runtimeIdentity,
 			Runtime:            sanitizedRuntime,
 			Artifact:           artifact,
 			Commit:             commit,
