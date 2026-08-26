@@ -338,6 +338,7 @@ As decisões executáveis estão registradas separadamente para manter o escopo 
 - [`ADR-017`](adr/017-topology-identity-cardinality.md): identidades, confidence, janelas, allowlists e limites de cardinalidade.
 - [`ADR-018`](adr/018-runtime-observed-service-association.md): associação explícita entre runtime e serviço observado no mesmo environment.
 - [`ADR-019`](adr/019-temporal-endpoint-context.md): contexto temporal de endpoints observados, sem agregação de janelas sobrepostas.
+- [`ADR-020`](adr/020-offline-deployment-ledger.md): ledger de deployments offline, atômico e sem correlação com runtime.
 
 Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go` e exigiu nova revisão da tese ao final da Phase 2. A [Decision 002](decisions/002-phase-3-limited-learning.md) autoriza separadamente e somente a Phase 3 como aprendizado limitado; ela não é `go`, não valida a tese e mantém a Phase 4 bloqueada.
 
@@ -438,7 +439,7 @@ updated_at      timestamp
 
 ### 3.4 Build
 
-**Disponibilidade prevista:** Phase 3. Permanece conceitual antes disso.
+**Disponibilidade prevista:** Phase 3. Permanece conceitual nesta slice.
 
 ```text
 id              UUIDv7 PK
@@ -485,7 +486,8 @@ Tags são aliases mutáveis e DEVEM ficar em tabela separada `artifact_aliases` 
 
 ### 3.6 Deployment
 
-**Disponibilidade prevista:** Phase 3. Permanece conceitual antes disso.
+**Disponibilidade:** materializada na Slice 3.1 como deployment ledger offline.
+Build permanece conceitual; não há correlação deployment/runtime nesta slice.
 
 ```text
 id              UUIDv7 PK

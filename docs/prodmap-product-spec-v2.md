@@ -786,6 +786,10 @@ permanecia pendente e a Phase 3 estava bloqueada até decisão explícita do own
 é `go`, não valida a tese e permite implementação em slices verticais pequenas e
 revisáveis. A Phase 4 permanece bloqueada até uma nova decisão explícita.
 
+**Slice 3.1 materializada:** ledger offline versionado, ingestão SQLite atômica e
+idempotente e consulta `deploys`; não inclui Build, timeline, fonte remota ou
+correlação deployment/runtime.
+
 Entregas:
 
 - contrato `DeploymentSource`;

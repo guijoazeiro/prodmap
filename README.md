@@ -113,9 +113,25 @@ Use the same environment for Docker inventory and frozen telemetry:
 ./bin/prodmap endpoints --service checkout-api --environment reference --at 2026-08-24T13:40:30Z --json
 ```
 
-Only windows active in `[window_start, window_end)` are returned. Overlapping windows remain separate and are never summed; no active window is not evidence that traffic or an endpoint is absent. This is observed telemetry only: it does not implement baseline or regression, and Phase 3 remains blocked.
+Only windows active in `[window_start, window_end)` are returned. Overlapping windows remain separate and are never summed; no active window is not evidence that traffic or an endpoint is absent.
 
-Metrics/logs ingestion, a live receiver in Prodmap, deployments, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
+## Phase 3 Slice 3.1 — offline deployment ledger
+
+Phase 3 is authorized for limited learning. Slice 3.1 ingests a frozen deployment
+ledger atomically and exposes registered deployments without claiming a runtime
+match, causality, baseline, or regression:
+
+```bash
+./bin/prodmap deployments ingest --file deployments.jsonl --json
+./bin/prodmap deploys --environment reference --json
+```
+
+The input contract is [deployment-ledger-jsonl/v1](docs/contracts/deployment-ledger-jsonl-v1.md).
+Replay is idempotent, append-only ledgers may add records, and changed deployment
+identities conflict rather than overwrite history. The slice has no Build entity,
+timeline, remote deployment source, or deployment/runtime correlation.
+
+Metrics/logs ingestion, a live receiver in Prodmap, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 
 ## Specifications
 
