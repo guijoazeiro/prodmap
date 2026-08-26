@@ -339,7 +339,7 @@ As decisões executáveis estão registradas separadamente para manter o escopo 
 - [`ADR-018`](adr/018-runtime-observed-service-association.md): associação explícita entre runtime e serviço observado no mesmo environment.
 - [`ADR-019`](adr/019-temporal-endpoint-context.md): contexto temporal de endpoints observados, sem agregação de janelas sobrepostas.
 
-Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go`, exige nova revisão da tese ao final da Phase 2 e mantém a Phase 3 bloqueada.
+Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go` e exigiu nova revisão da tese ao final da Phase 2. A [Decision 002](decisions/002-phase-3-limited-learning.md) autoriza separadamente e somente a Phase 3 como aprendizado limitado; ela não é `go`, não valida a tese e mantém a Phase 4 bloqueada.
 
 ---
 
@@ -1361,7 +1361,7 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 ## 27. Ordem recomendada de implementação
 
 ```text
-0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation, o protótipo mínimo da Phase 1, a Phase 2A e a conclusão limitada da Phase 2 usada para produzir e aprender com o pacote experimental podem anteceder a decisão sem representar `go`; a continuação é `continue-for-learning`, termina no gate da Phase 2 e mantém a Phase 3 bloqueada
+0. preparar e executar a Phase -1 e registrar go, pivot ou stop; por autorização explícita, a Foundation, o protótipo mínimo da Phase 1, a Phase 2A e a conclusão limitada da Phase 2 usada para produzir e aprender com o pacote experimental podem anteceder a decisão sem representar `go`; a continuação é `continue-for-learning`, termina no gate da Phase 2 e mantinha a Phase 3 bloqueada antes da autorização separada da Decision 002
 1. materializar somente os ADRs necessários para Phase 0/1
 2. criar o esqueleto mínimo por capacidades
 3. implementar tipos fundamentais: IDs, tempo, enums e erros
@@ -1410,10 +1410,11 @@ apenas tag mutável                → LOW
 sem metadata de commit            → UNKNOWN
 ```
 
-Somente após essa slice funcionar ponta a ponta será permitido expandir o schema. Sob `continue-for-learning`, a Phase 2 pode incluir OTel offline, grafo observado, agregados temporais limitados, integração entre runtime inventory e serviços observados somente mediante evidência, consultas temporais, controle de cardinalidade e validação com a aplicação de referência. Deployments, baseline, regression, métricas e logs OTLP, receiver vivo, MCP e a Phase 3 permanecem bloqueados. A tese deve ser revisada no gate da Phase 2, e a Phase 3 permanece bloqueada até nova decisão explícita.
+Somente após essa slice funcionar ponta a ponta será permitido expandir o schema. Sob `continue-for-learning`, a Phase 2 pode incluir OTel offline, grafo observado, agregados temporais limitados, integração entre runtime inventory e serviços observados somente mediante evidência, consultas temporais, controle de cardinalidade e validação com a aplicação de referência. Antes da [Decision 002](decisions/002-phase-3-limited-learning.md), deployments, baseline, regression, métricas e logs OTLP, receiver vivo, MCP e a Phase 3 permaneciam bloqueados. A tese deve ser revisada no gate da Phase 2; a Decision 002 autoriza separadamente e somente a Phase 3 como aprendizado limitado, mantendo todos os demais itens bloqueados.
 
 O [Phase 2 Gate Review](reviews/phase-2-gate-review.md) registra o resultado
-técnico desse gate sem o converter em validação da tese ou autorização da Phase 3.
+técnico desse gate sem, por si, o converter em validação da tese ou autorização
+da Phase 3.
 
 ---
 

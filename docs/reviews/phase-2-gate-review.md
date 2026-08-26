@@ -219,3 +219,9 @@ not a formal Experiment 001 result.
 The Phase 2 authorization has therefore reached its technical exit condition.
 Formal Phase -1 decision: NOT MADE. Phase 3 authorization: BLOCKED pending an
 explicit owner decision.
+
+## Subsequent decision
+
+After this gate review, the owner recorded [Decision 002](../decisions/002-phase-3-limited-learning.md), authorizing Phase 3 as limited learning. The historical
+`Phase 3 authorization: BLOCKED` status above remains the correct snapshot at the
+time of this gate review; it has not been rewritten as a new gate verdict.
