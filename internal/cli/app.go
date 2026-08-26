@@ -61,11 +61,11 @@ func NewApp(stdout, stderr io.Writer, buildInfo BuildInfo) *App {
 // Run executes one CLI invocation and returns its process exit code.
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph> [flags]")
+		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints> [flags]")
 		return ExitCode(errs.ErrInvalid)
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(a.Stdout, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph> [flags]")
+		fmt.Fprintln(a.Stdout, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints> [flags]")
 		return 0
 	}
 
@@ -95,6 +95,14 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		err = a.runTelemetry(ctx, args[1:])
 	case "graph":
 		err = a.runGraph(ctx, args[1:])
+	case "endpoints":
+		err = a.runEndpoints(ctx, args[1:])
+	case "help":
+		if len(args) == 2 && args[1] == "endpoints" {
+			writeEndpointsUsage(a.Stdout)
+			return 0
+		}
+		err = fmt.Errorf("unknown help topic: %w", errs.ErrInvalid)
 	default:
 		err = fmt.Errorf("unknown command %q: %w", command, errs.ErrInvalid)
 	}

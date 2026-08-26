@@ -138,6 +138,61 @@ type Store interface {
 	SaveTelemetry(context.Context, Snapshot) (IngestResult, error)
 }
 
+// EndpointQuery selects endpoint windows active at one instant.
+type EndpointQuery struct {
+	ServiceKey  string
+	Environment string
+	At          time.Time
+	Limit       int
+	Cursor      string
+}
+
+type EndpointService struct {
+	ID          string
+	LogicalKey  string
+	DisplayName string
+}
+
+type EndpointWindow struct {
+	ID            string
+	IngestionID   string
+	WindowStart   time.Time
+	WindowEnd     time.Time
+	RequestCount  int64
+	ErrorCount    int64
+	DurationSumNS int64
+	P50NS         int64
+	P95NS         int64
+	P99NS         int64
+	IsComplete    bool
+	CoverageRatio *float64
+	Algorithm     string
+}
+
+type EndpointRecord struct {
+	ID            string
+	Protocol      string
+	Operation     string
+	RouteTemplate *string
+	FirstSeenAt   time.Time
+	LastSeenAt    time.Time
+	Windows       []EndpointWindow
+}
+
+type EndpointContext struct {
+	At              time.Time
+	Environment     string
+	Service         EndpointService
+	TelemetryStatus string
+	Items           []EndpointRecord
+	NextCursor      string
+	Warnings        []string
+}
+
+type EndpointReader interface {
+	EndpointContext(context.Context, EndpointQuery) (EndpointContext, error)
+}
+
 type Decoder interface {
 	Decode(context.Context, []byte, string, string, string, time.Time, time.Time, time.Time) (Snapshot, error)
 }

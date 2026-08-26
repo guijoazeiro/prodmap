@@ -767,6 +767,7 @@ Entregas:
 - serviços, endpoints e dependências observadas;
 - temporalidade do grafo;
 - `graph` e contexto de serviço/endpoint.
+- contexto temporal de endpoint por `prodmap endpoints`, preservando janelas observadas sem agregação sobreposta.
 
 **Gate:** grafo reprodutível em aplicações de referência, com controle de cardinalidade.
 

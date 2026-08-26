@@ -105,6 +105,16 @@ Use the same environment for Docker inventory and frozen telemetry:
 
 `services` reports `telemetry_observed` and `runtime_association`. An association is `MATCHED/HIGH` only when the allowlisted OCI image title and normalized OTel service identity match exactly in the same environment. The title is not secret, but arbitrary labels remain blocked. Without a title, association is `UNKNOWN`; image references, container names, and fuzzy matching are not evidence. Runtime association does not establish causality and is never `EXACT`.
 
+## Temporal endpoint context
+
+`endpoints` reads materialized endpoint telemetry at a specific instant:
+
+```bash
+./bin/prodmap endpoints --service checkout-api --environment reference --at 2026-08-24T13:40:30Z --json
+```
+
+Only windows active in `[window_start, window_end)` are returned. Overlapping windows remain separate and are never summed; no active window is not evidence that traffic or an endpoint is absent. This is observed telemetry only: it does not implement baseline or regression, and Phase 3 remains blocked.
+
 Metrics/logs ingestion, a live receiver in Prodmap, deployments, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 
 ## Specifications

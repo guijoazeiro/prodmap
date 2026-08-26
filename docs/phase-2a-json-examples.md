@@ -2,6 +2,28 @@
 
 Identifiers and hashes below are illustrative; command envelopes always include `generated_at`, `warnings`, and `pagination` according to schema `1.0`.
 
+## Temporal endpoint context
+
+`endpoints` returns only endpoint windows active at `at` using `[start,end)`. Overlapping windows are intentionally separate:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "endpoints",
+  "data": {
+    "at": "2026-08-24T13:40:30Z",
+    "environment": "reference",
+    "service": {"id": "018...", "logical_key": "checkout-api", "display_name": "checkout-api"},
+    "telemetry_status": "OBSERVED",
+    "items": [{"id": "018...", "protocol": "http", "operation": "POST /checkout", "route_template": "/checkout", "first_seen_at": "2026-08-24T13:40:00Z", "last_seen_at": "2026-08-24T13:41:00Z", "windows": [{"id": "018...", "ingestion_id": "018...", "window_start": "2026-08-24T13:40:00Z", "window_end": "2026-08-24T13:41:00Z", "request_count": 12, "error_count": 0, "duration_sum_ns": 123456789, "p50_duration_ns": 10000000, "p95_duration_ns": 20000000, "p99_duration_ns": 30000000, "is_complete": false, "coverage_ratio": null, "algorithm_version": "otel-window/v1"}]}]
+  },
+  "warnings": [],
+  "pagination": {"limit": 100, "next_cursor": null}
+}
+```
+
+When a service exists but has no active endpoint window, the command returns `telemetry_status: "NO_ACTIVE_WINDOW"` and `items: []`; this is not evidence of absent traffic.
+
 ```json
 {
   "schema_version": "1.0",
