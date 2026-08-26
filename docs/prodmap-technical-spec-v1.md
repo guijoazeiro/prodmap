@@ -1412,6 +1412,9 @@ sem metadata de commit            → UNKNOWN
 
 Somente após essa slice funcionar ponta a ponta será permitido expandir o schema. Sob `continue-for-learning`, a Phase 2 pode incluir OTel offline, grafo observado, agregados temporais limitados, integração entre runtime inventory e serviços observados somente mediante evidência, consultas temporais, controle de cardinalidade e validação com a aplicação de referência. Deployments, baseline, regression, métricas e logs OTLP, receiver vivo, MCP e a Phase 3 permanecem bloqueados. A tese deve ser revisada no gate da Phase 2, e a Phase 3 permanece bloqueada até nova decisão explícita.
 
+O [Phase 2 Gate Review](reviews/phase-2-gate-review.md) registra o resultado
+técnico desse gate sem o converter em validação da tese ou autorização da Phase 3.
+
 ---
 
 ## 28. Regra final

@@ -773,6 +773,10 @@ Entregas:
 
 **Autorização limitada:** a Phase 2 pode ser concluída sob `continue-for-learning`, com a aplicação de referência e cenários mais representativos. A tese deve receber nova revisão explícita neste gate; a autorização não é `go` e não desbloqueia a Phase 3.
 
+O [Phase 2 Gate Review](reviews/phase-2-gate-review.md) registra o PASS técnico
+sem validar a tese: a decisão formal da Phase -1 permanece pendente e a Phase 3
+continua bloqueada até decisão explícita do owner.
+
 ### Phase 3 — Deployment Intelligence
 
 **Objetivo:** criar timeline e proveniência de deployments.
