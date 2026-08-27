@@ -80,6 +80,12 @@ type SourceResult struct {
 	Warnings                                                  []string
 }
 
+type SyncResult struct {
+	Ingestion           IngestResult
+	SourceObservationID string
+	SourceExisting      bool
+}
+
 // DeploymentSource is consumer-owned: implementations provide a validated
 // deployment-ledger snapshot and never expose transport responses.
 type DeploymentSource interface {
@@ -341,6 +347,42 @@ func ValidateSnapshot(snapshot Snapshot) error {
 			return fmt.Errorf("%w: duplicate deployment identity", errs.ErrInvalid)
 		}
 		seen[key] = struct{}{}
+	}
+	return nil
+}
+
+// ValidateSourceResult rechecks metadata supplied by a DeploymentSource before
+// persistence. The logical SourceKey is derived, never caller-selected.
+func ValidateSourceResult(result SourceResult) error {
+	if err := ValidateSnapshot(result.Snapshot); err != nil {
+		return err
+	}
+	owner, repository, ok := strings.Cut(result.Repository, "/")
+	if !ok || strings.Contains(repository, "/") || !validGitHubSourcePart(owner, 100) || !validGitHubSourcePart(repository, 100) || owner != strings.ToLower(owner) || repository != strings.ToLower(repository) || !validGitHubArtifactName(result.ArtifactName) || result.ArtifactID <= 0 || result.WorkflowRunID <= 0 || !validSHA256Value(result.ArtifactDigest) || !validGitHubWorkflowSHA(result.WorkflowHeadSHA) {
+		return fmt.Errorf("%w: invalid GitHub Actions deployment source result", errs.ErrInvalid)
+	}
+	for _, timestamp := range []time.Time{result.CreatedAt, result.UpdatedAt, result.ExpiresAt, result.Snapshot.ObservedAt} {
+		if timestamp.IsZero() || timestamp.Location() != time.UTC {
+			return fmt.Errorf("%w: invalid GitHub Actions source timestamp", errs.ErrInvalid)
+		}
+	}
+	if result.UpdatedAt.Before(result.CreatedAt) || !result.ExpiresAt.After(result.CreatedAt) {
+		return fmt.Errorf("%w: inconsistent GitHub Actions source timestamps", errs.ErrInvalid)
+	}
+	for _, record := range result.Snapshot.Records {
+		if record.VCSRevisionVerified && (record.VCSRevision != result.WorkflowHeadSHA || record.GitHead != result.WorkflowHeadSHA) {
+			return fmt.Errorf("%w: verified deployment revision does not match GitHub Actions workflow head", errs.ErrInvalid)
+		}
+	}
+	payload := "github-actions-ledger/v1\x00" + owner + "\x00" + repository + "\x00" + result.ArtifactName
+	digest := sha256.Sum256([]byte(payload))
+	if result.Snapshot.SourceKey != "sha256:"+hex.EncodeToString(digest[:]) || result.Warnings == nil {
+		return fmt.Errorf("%w: inconsistent GitHub Actions deployment source result", errs.ErrInvalid)
+	}
+	for _, warning := range result.Warnings {
+		if err := safeString("warning", warning, 512); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -679,6 +721,10 @@ func validSHA(value string) bool {
 		}
 	}
 	return true
+}
+
+func validGitHubWorkflowSHA(value string) bool {
+	return value != "unknown" && validSHA(value)
 }
 
 func validGitHubSourcePart(value string, maximum int) bool {

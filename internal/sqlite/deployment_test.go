@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/guijoazeiro/prodmap/internal/correlation"
 	"github.com/guijoazeiro/prodmap/internal/deployment"
+	"github.com/guijoazeiro/prodmap/internal/errs"
 	"github.com/guijoazeiro/prodmap/internal/inventory"
 )
 
@@ -50,6 +53,154 @@ func TestDeploymentLedgerReplayAndQuery(t *testing.T) {
 	}
 	if len(result.Items) != 1 || result.NextCursor != "" {
 		t.Fatalf("second page = %#v", result)
+	}
+}
+
+func TestGitHubActionsDeploymentSourceIsAtomicAndIdempotent(t *testing.T) {
+	ctx := t.Context()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "prodmap.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	source := githubActionsDeploymentSource(t, ctx)
+	first, err := store.SaveDeploymentSource(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SourceExisting || first.Ingestion.IdempotentReplay || first.Ingestion.DeploymentsInserted != 2 || first.SourceObservationID == "" {
+		t.Fatalf("first sync=%#v", first)
+	}
+	replay, err := store.SaveDeploymentSource(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replay.SourceExisting || !replay.Ingestion.IdempotentReplay || replay.Ingestion.IngestionID != first.Ingestion.IngestionID || replay.SourceObservationID != first.SourceObservationID {
+		t.Fatalf("replay sync=%#v", replay)
+	}
+	var ingestions, observations, deployments int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployment_ingestions`).Scan(&ingestions); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM github_actions_deployment_fetches`).Scan(&observations); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments`).Scan(&deployments); err != nil {
+		t.Fatal(err)
+	}
+	if ingestions != 1 || observations != 1 || deployments != 2 {
+		t.Fatalf("counts ingestions=%d observations=%d deployments=%d", ingestions, observations, deployments)
+	}
+
+	conflict := source
+	conflict.ArtifactDigest = "sha256:" + strings.Repeat("b", 64)
+	if _, err := store.SaveDeploymentSource(ctx, conflict); err == nil {
+		t.Fatal("conflicting source metadata unexpectedly persisted")
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM github_actions_deployment_fetches`).Scan(&observations); err != nil || observations != 1 {
+		t.Fatalf("conflict changed source observations=%d err=%v", observations, err)
+	}
+}
+
+func TestGitHubActionsArtifactIdentityBindsOneLedger(t *testing.T) {
+	ctx := t.Context()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "prodmap.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ledgerA := githubActionsDeploymentSource(t, ctx)
+	first, err := store.SaveDeploymentSource(ctx, ledgerA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGitHubDeploymentCounts(t, store, 1, 1, 2)
+	if replay, err := store.SaveDeploymentSource(ctx, ledgerA); err != nil || !replay.Ingestion.IdempotentReplay || !replay.SourceExisting {
+		t.Fatalf("same artifact/same ledger replay=%#v err=%v", replay, err)
+	}
+	assertGitHubDeploymentCounts(t, store, 1, 1, 2)
+
+	newArtifactSameLedger := ledgerA
+	newArtifactSameLedger.ArtifactID = 43
+	newArtifactSameLedger.WorkflowRunID = 44
+	if result, err := store.SaveDeploymentSource(ctx, newArtifactSameLedger); err != nil || !result.Ingestion.IdempotentReplay || result.SourceExisting || result.Ingestion.IngestionID != first.Ingestion.IngestionID {
+		t.Fatalf("new artifact/same ledger result=%#v err=%v", result, err)
+	}
+	var fetchedIngestionID string
+	if err := store.db.QueryRowContext(ctx, `SELECT ingestion_id FROM github_actions_deployment_fetches WHERE artifact_id=?`, newArtifactSameLedger.ArtifactID).Scan(&fetchedIngestionID); err != nil || fetchedIngestionID != first.Ingestion.IngestionID {
+		t.Fatalf("new artifact fetch ingestion=%q err=%v", fetchedIngestionID, err)
+	}
+	assertGitHubDeploymentCounts(t, store, 1, 2, 2)
+
+	ledgerB := githubActionsDeploymentSource(t, ctx)
+	ledgerB.ArtifactID = 44
+	ledgerB.WorkflowRunID = 45
+	ledgerB.Snapshot = reorderedGitHubLedger(t, ctx, ledgerB.Snapshot.ObservedAt)
+	if result, err := store.SaveDeploymentSource(ctx, ledgerB); err != nil || result.Ingestion.IdempotentReplay || result.SourceExisting {
+		t.Fatalf("new artifact/new ledger result=%#v err=%v", result, err)
+	}
+	assertGitHubDeploymentCounts(t, store, 2, 3, 2)
+
+	conflict := ledgerB
+	conflict.Snapshot = ledgerA.Snapshot
+	if _, err := store.SaveDeploymentSource(ctx, conflict); !errors.Is(err, errs.ErrConflict) {
+		t.Fatalf("same artifact/different ledger error=%v", err)
+	}
+	assertGitHubDeploymentCounts(t, store, 2, 3, 2)
+}
+
+func reorderedGitHubLedger(t *testing.T, ctx context.Context, observedAt time.Time) deployment.Snapshot {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "deployment", "valid-two-services.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(contents), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("fixture lines=%d", len(lines))
+	}
+	return mustLoadGitHubLedger(t, ctx, []byte(lines[1]+"\n"+lines[0]+"\n"), observedAt)
+}
+
+func mustLoadGitHubLedger(t *testing.T, ctx context.Context, contents []byte, observedAt time.Time) deployment.Snapshot {
+	t.Helper()
+	snapshot, err := deployment.LoadGitHubActionsLedger(ctx, contents, "acme", "prodmap", "deployment-ledger", observedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func assertGitHubDeploymentCounts(t *testing.T, store *Store, wantIngestions, wantFetches, wantDeployments int) {
+	t.Helper()
+	var ingestions, fetches, deployments int
+	if err := store.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM deployment_ingestions`).Scan(&ingestions); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM github_actions_deployment_fetches`).Scan(&fetches); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM deployments`).Scan(&deployments); err != nil {
+		t.Fatal(err)
+	}
+	if ingestions != wantIngestions || fetches != wantFetches || deployments != wantDeployments {
+		t.Fatalf("counts ingestions=%d fetches=%d deployments=%d want=%d,%d,%d", ingestions, fetches, deployments, wantIngestions, wantFetches, wantDeployments)
+	}
+}
+
+func githubActionsDeploymentSource(t *testing.T, ctx context.Context) deployment.SourceResult {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "deployment", "valid-two-services.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 26, 12, 1, 0, 0, time.UTC)
+	snapshot := mustLoadGitHubLedger(t, ctx, contents, at)
+	return deployment.SourceResult{
+		Repository: "acme/prodmap", ArtifactName: "deployment-ledger", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), WorkflowHeadSHA: strings.Repeat("a", 40), ArtifactID: 42, WorkflowRunID: 43,
+		CreatedAt: at.Add(-time.Hour), UpdatedAt: at.Add(-time.Minute), ExpiresAt: at.Add(24 * time.Hour), Snapshot: snapshot, Warnings: []string{},
 	}
 }
 

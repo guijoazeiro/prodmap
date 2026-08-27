@@ -17,6 +17,7 @@ const defaultDeploymentLimit = 100
 
 func writeDeploymentsUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "usage: prodmap deployments ingest --file <path> [--format deployment-ledger-jsonl/v1] [--project-dir <path>] [--data-dir <path>] [--json]")
+	fmt.Fprintln(writer, "       prodmap deployments sync github-actions --owner <owner> --repository <repository> --artifact <name> [--project-dir <path>] [--data-dir <path>] [--json]")
 }
 func writeDeploysUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "usage: prodmap deploys [--service <logical-key>] [--environment <environment>] [--since <RFC3339>] [--until <RFC3339>] [--status <status>] [--limit <1..1000>] [--cursor <opaque>] [--json]")
@@ -29,6 +30,9 @@ func (a *App) runDeployments(ctx context.Context, args []string) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		writeDeploymentsUsage(a.Stdout)
 		return nil
+	}
+	if args[0] == "sync" {
+		return a.runGitHubActionsDeploymentSync(ctx, args[1:])
 	}
 	if args[0] != "ingest" {
 		return fmt.Errorf("unknown deployments subcommand %q: %w", args[0], errs.ErrInvalid)
@@ -75,6 +79,108 @@ func (a *App) runDeployments(ctx context.Context, args []string) error {
 	return nil
 }
 
+func (a *App) runGitHubActionsDeploymentSync(ctx context.Context, args []string) error {
+	if len(args) == 0 || args[0] != "github-actions" {
+		return fmt.Errorf("deployments sync requires subcommand github-actions: %w", errs.ErrInvalid)
+	}
+	flags := flag.NewFlagSet("deployments sync github-actions", flag.ContinueOnError)
+	flags.Usage = func() { writeDeploymentsUsage(flags.Output()) }
+	common := addInventoryFlags(flags)
+	owner := flags.String("owner", "", "GitHub repository owner")
+	repository := flags.String("repository", "", "GitHub repository name")
+	artifact := flags.String("artifact", "", "GitHub Actions artifact name")
+	help, err := a.parseCommandFlags(flags, args[1:])
+	if help {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("parse deployments sync github-actions flags: %w: %v", errs.ErrInvalid, err)
+	}
+	if flags.NArg() != 0 || !validGitHubSyncPart(*owner, 100) || !validGitHubSyncPart(*repository, 100) || !validGitHubSyncArtifact(*artifact) {
+		return fmt.Errorf("--owner, --repository, and --artifact are required and must be valid: %w", errs.ErrInvalid)
+	}
+	token, found := a.Environment["PRODMAP_GITHUB_TOKEN"]
+	if !found || token == "" || strings.ContainsAny(token, "\r\n") {
+		return fmt.Errorf("PRODMAP_GITHUB_TOKEN is required for GitHub Actions deployment sync: %w", errs.ErrInvalid)
+	}
+	if a.GitHubDeploymentSource == nil {
+		return fmt.Errorf("GitHub Actions deployment source is unavailable: %w", errs.ErrUnavailable)
+	}
+	source, err := a.GitHubDeploymentSource(token)
+	if err != nil {
+		return fmt.Errorf("configure GitHub Actions deployment source: %w", err)
+	}
+	timeout := a.GitHubSyncTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	observedAt := a.Now().UTC()
+	result, err := source.Fetch(fetchCtx, deployment.SourceQuery{Owner: *owner, Repository: *repository, ArtifactName: *artifact, ObservedAt: observedAt})
+	if err != nil {
+		return fmt.Errorf("fetch GitHub Actions deployment artifact: %w", err)
+	}
+	if err := deployment.ValidateSourceResult(result); err != nil {
+		return fmt.Errorf("validate GitHub Actions deployment artifact: %w", err)
+	}
+	_, store, err := a.openInventory(ctx, common)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	saved, err := store.SaveDeploymentSource(ctx, result)
+	if err != nil {
+		return fmt.Errorf("persist GitHub Actions deployment artifact: %w", err)
+	}
+	data := deploymentSyncOutput{
+		Source: githubActionsArtifactOutput{
+			Kind: "github_actions_artifact", Repository: result.Repository, ArtifactName: result.ArtifactName, ArtifactID: result.ArtifactID,
+			ArtifactDigest: result.ArtifactDigest, WorkflowRunID: result.WorkflowRunID, WorkflowHeadSHA: result.WorkflowHeadSHA,
+			CreatedAt: result.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: result.UpdatedAt.Format(time.RFC3339Nano), ExpiresAt: result.ExpiresAt.Format(time.RFC3339Nano),
+		},
+		Ingestion: deploymentSyncIngestionOutput{
+			IngestionID: saved.Ingestion.IngestionID, SourceHash: saved.Ingestion.SourceHash, Format: saved.Ingestion.Format,
+			RecordsSeen: saved.Ingestion.RecordsSeen, DeploymentsInserted: saved.Ingestion.DeploymentsInserted,
+			DeploymentsExisting: saved.Ingestion.DeploymentsExisting, IdempotentReplay: saved.Ingestion.IdempotentReplay,
+		},
+		SourceObservation: deploymentSourceObservationOutput{ID: saved.SourceObservationID, Existing: saved.SourceExisting},
+	}
+	generatedAt := a.Now().UTC()
+	if *common.jsonOutput {
+		return WriteSuccess(a.Stdout, "deployments sync github-actions", generatedAt, data, saved.Ingestion.Warnings, nil)
+	}
+	fmt.Fprintf(a.Stdout, "GitHub Actions deployment sync %s: repository=%s artifact=%s inserted=%d existing=%d replay=%t\n", data.Ingestion.IngestionID, data.Source.Repository, data.Source.ArtifactName, data.Ingestion.DeploymentsInserted, data.Ingestion.DeploymentsExisting, data.Ingestion.IdempotentReplay)
+	for _, warning := range saved.Ingestion.Warnings {
+		fmt.Fprintf(a.Stderr, "warning: %s\n", warning)
+	}
+	return nil
+}
+
+func validGitHubSyncPart(value string, maximum int) bool {
+	if value == "" || len(value) > maximum || strings.Contains(value, "..") {
+		return false
+	}
+	for index, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') || index == 0 && (character == '-' || character == '_' || character == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func validGitHubSyncArtifact(value string) bool {
+	if value == "" || len(value) > 255 || strings.Contains(value, "..") || strings.ContainsAny(value, "/\\") {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 type deploymentIngestOutput struct {
 	IngestionID         string `json:"ingestion_id"`
 	SourceHash          string `json:"source_hash"`
@@ -83,6 +189,36 @@ type deploymentIngestOutput struct {
 	DeploymentsInserted int    `json:"deployments_inserted"`
 	DeploymentsExisting int    `json:"deployments_existing"`
 	IdempotentReplay    bool   `json:"idempotent_replay"`
+}
+type deploymentSyncOutput struct {
+	Source            githubActionsArtifactOutput       `json:"source"`
+	Ingestion         deploymentSyncIngestionOutput     `json:"ingestion"`
+	SourceObservation deploymentSourceObservationOutput `json:"source_observation"`
+}
+type githubActionsArtifactOutput struct {
+	Kind            string `json:"kind"`
+	Repository      string `json:"repository"`
+	ArtifactName    string `json:"artifact_name"`
+	ArtifactID      int64  `json:"artifact_id"`
+	ArtifactDigest  string `json:"artifact_digest"`
+	WorkflowRunID   int64  `json:"workflow_run_id"`
+	WorkflowHeadSHA string `json:"workflow_head_sha"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+	ExpiresAt       string `json:"expires_at"`
+}
+type deploymentSyncIngestionOutput struct {
+	IngestionID         string `json:"ingestion_id"`
+	SourceHash          string `json:"source_hash"`
+	Format              string `json:"format"`
+	RecordsSeen         int    `json:"records_seen"`
+	DeploymentsInserted int    `json:"deployments_inserted"`
+	DeploymentsExisting int    `json:"deployments_existing"`
+	IdempotentReplay    bool   `json:"idempotent_replay"`
+}
+type deploymentSourceObservationOutput struct {
+	ID       string `json:"id"`
+	Existing bool   `json:"existing"`
 }
 type deploysOutput struct {
 	Since                string             `json:"since"`

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -82,7 +83,7 @@ func TestOpenUpgradesFoundationDatabaseAppendOnly(t *testing.T) {
 	}
 	defer store.Close()
 	status, err := store.MigrationStatus(context.Background())
-	if err != nil || status.AppliedVersion != 4 || !status.Current {
+	if err != nil || status.AppliedVersion != 5 || !status.Current {
 		t.Fatalf("upgraded migration status = %+v, err=%v", status, err)
 	}
 	var count int
@@ -131,7 +132,7 @@ func TestOpenUpgradesDatabaseStartingAtMigrationTwo(t *testing.T) {
 	}
 	defer store.Close()
 	status, err := store.MigrationStatus(context.Background())
-	if err != nil || status.AppliedVersion != 4 || !status.Current {
+	if err != nil || status.AppliedVersion != 5 || !status.Current {
 		t.Fatalf("migration status=%+v err=%v", status, err)
 	}
 	var phaseOneRows int
@@ -141,6 +142,43 @@ func TestOpenUpgradesDatabaseStartingAtMigrationTwo(t *testing.T) {
 	var telemetryTable int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='telemetry_ingestions'`).Scan(&telemetryTable); err != nil || telemetryTable != 1 {
 		t.Fatalf("telemetry table count=%d err=%v", telemetryTable, err)
+	}
+}
+
+func TestOpenUpgradesDeploymentLedgerDatabaseToGitHubActionsFetches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upgrade-from-four.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	prior := fstest.MapFS{}
+	for version, name := range map[int]string{1: "foundation", 2: "runtime_provenance", 3: "otel_validation_graph", 4: "deployment_ledger"} {
+		path := "migrations/00000" + strconv.Itoa(version) + "_" + name + ".sql"
+		contents, err := embeddedMigrations.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prior[path] = &fstest.MapFile{Data: contents}
+	}
+	if err := applyMigrations(t.Context(), db, prior); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	status, err := store.MigrationStatus(t.Context())
+	if err != nil || status.AppliedVersion != 5 || !status.Current {
+		t.Fatalf("migration status=%+v err=%v", status, err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='github_actions_deployment_fetches'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("github actions fetch table count=%d err=%v", count, err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,60 @@ func TestLoadGitHubActionsLedgerUsesLogicalSourceKey(t *testing.T) {
 	}
 	if first.SourceKey != second.SourceKey || first.SourceKey == other.SourceKey || first.SourceHash != second.SourceHash || first.SourceKey == first.SourceHash {
 		t.Fatalf("source/hash separation first=%#v other=%#v", first, other)
+	}
+}
+
+func TestValidateSourceResultRejectsForgedRemoteMetadata(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "deployment", "valid-two-services.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 26, 12, 1, 0, 0, time.UTC)
+	snapshot, err := LoadGitHubActionsLedger(t.Context(), contents, "acme", "prodmap", "deployment-ledger", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := SourceResult{Repository: "acme/prodmap", ArtifactName: "deployment-ledger", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), WorkflowHeadSHA: strings.Repeat("a", 40), ArtifactID: 1, WorkflowRunID: 2, CreatedAt: at.Add(-time.Hour), UpdatedAt: at, ExpiresAt: at.Add(time.Hour), Snapshot: snapshot, Warnings: []string{}}
+	if err := ValidateSourceResult(result); err != nil {
+		t.Fatalf("valid result rejected: %v", err)
+	}
+	t.Run("verified VCS revision mismatch", func(t *testing.T) {
+		mismatch := result
+		mismatch.Snapshot.Records = append([]Record(nil), result.Snapshot.Records...)
+		mismatch.Snapshot.Records[0].VCSRevision = strings.Repeat("c", 40)
+		mismatch.Snapshot.Records[0].Fingerprint = fingerprint(mismatch.Snapshot.Records[0])
+		if err := ValidateSourceResult(mismatch); !errors.Is(err, errs.ErrInvalid) {
+			t.Fatalf("VCS revision mismatch error=%v", err)
+		}
+	})
+	t.Run("verified git head mismatch", func(t *testing.T) {
+		mismatch := result
+		mismatch.Snapshot.Records = append([]Record(nil), result.Snapshot.Records...)
+		mismatch.Snapshot.Records[0].GitHead = strings.Repeat("c", 40)
+		mismatch.Snapshot.Records[0].Fingerprint = fingerprint(mismatch.Snapshot.Records[0])
+		if err := ValidateSourceResult(mismatch); !errors.Is(err, errs.ErrInvalid) {
+			t.Fatalf("Git head mismatch error=%v", err)
+		}
+	})
+	t.Run("unverified record remains unpromoted", func(t *testing.T) {
+		unverified := result
+		unverified.Snapshot.Records = append([]Record(nil), result.Snapshot.Records...)
+		unverified.Snapshot.Records[0].VCSRevisionVerified = false
+		unverified.Snapshot.Records[0].VCSRevision = "unknown"
+		unverified.Snapshot.Records[0].GitHead = "unknown"
+		unverified.Snapshot.Records[0].Fingerprint = fingerprint(unverified.Snapshot.Records[0])
+		if err := ValidateSourceResult(unverified); err != nil {
+			t.Fatalf("unverified record should remain accepted: %v", err)
+		}
+	})
+	result.Repository = "Acme/prodmap"
+	if err := ValidateSourceResult(result); !errors.Is(err, errs.ErrInvalid) {
+		t.Fatalf("non-canonical repository error=%v", err)
+	}
+	result.Repository = "acme/prodmap"
+	result.Snapshot.SourceKey = "sha256:" + strings.Repeat("c", 64)
+	if err := ValidateSourceResult(result); !errors.Is(err, errs.ErrInvalid) {
+		t.Fatalf("forged source key error=%v", err)
 	}
 }
 
