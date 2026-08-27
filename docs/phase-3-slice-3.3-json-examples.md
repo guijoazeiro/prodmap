@@ -13,41 +13,6 @@ The `timeline` command is a dynamic, non-causal read model. `items`, `limitation
     "environment": "reference",
     "items": [
       {
-        "id": "evt_deployment_018fc2a0-0000-7000-8000-000000000001",
-        "time": "2026-08-26T12:00:00Z",
-        "kind": "deployment_running",
-        "environment": "reference",
-        "service": "checkout-api",
-        "relation_type": "DECLARED",
-        "subject": {
-          "type": "deployment",
-          "id": "018fc2a0-0000-7000-8000-000000000001",
-          "name": "reference-checkout-api-20260826120000"
-        },
-        "source": {
-          "kind": "deployment_ledger",
-          "observed_at": "2026-08-26T12:01:00Z",
-          "freshness_seconds": 1740
-        },
-        "confidence": {
-          "level": "HIGH",
-          "basis": "validated deployment ledger record"
-        },
-        "deployment": {
-          "status": "running",
-          "strategy": "compose",
-          "provenance_status": "EXACT",
-          "provenance_confidence": {
-            "level": "HIGH",
-            "basis": "immutable artifact and verified revision"
-          }
-        },
-        "runtime": null,
-        "concurrency": { "detected": false, "count": 1 },
-        "limitations": [],
-        "causality_claimed": false
-      },
-      {
         "id": "evt_runtime_018fc2a1-0000-7000-8000-000000000002",
         "time": "2026-08-26T12:00:05Z",
         "kind": "runtime_observed",
@@ -76,6 +41,41 @@ The `timeline` command is a dynamic, non-causal read model. `items`, `limitation
           "artifact_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "concurrency": { "detected": false, "count": 0 },
+        "limitations": [],
+        "causality_claimed": false
+      },
+      {
+        "id": "evt_deployment_018fc2a0-0000-7000-8000-000000000001",
+        "time": "2026-08-26T12:00:00Z",
+        "kind": "deployment_running",
+        "environment": "reference",
+        "service": "checkout-api",
+        "relation_type": "DECLARED",
+        "subject": {
+          "type": "deployment",
+          "id": "018fc2a0-0000-7000-8000-000000000001",
+          "name": "reference-checkout-api-20260826120000"
+        },
+        "source": {
+          "kind": "deployment_ledger",
+          "observed_at": "2026-08-26T12:01:00Z",
+          "freshness_seconds": 1740
+        },
+        "confidence": {
+          "level": "HIGH",
+          "basis": "validated deployment ledger record"
+        },
+        "deployment": {
+          "status": "running",
+          "strategy": "unknown",
+          "provenance_status": "MATCHED",
+          "provenance_confidence": {
+            "level": "HIGH",
+            "basis": "immutable artifact and verified revision"
+          }
+        },
+        "runtime": null,
+        "concurrency": { "detected": false, "count": 1 },
         "limitations": [],
         "causality_claimed": false
       }
