@@ -61,11 +61,11 @@ func NewApp(stdout, stderr io.Writer, buildInfo BuildInfo) *App {
 // Run executes one CLI invocation and returns its process exit code.
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|deployments|deploys> [flags]")
+		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|deployments|deploys|timeline> [flags]")
 		return ExitCode(errs.ErrInvalid)
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(a.Stdout, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|deployments|deploys> [flags]")
+		fmt.Fprintln(a.Stdout, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|deployments|deploys|timeline> [flags]")
 		return 0
 	}
 
@@ -104,6 +104,8 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		err = a.runDeployments(ctx, args[1:])
 	case "deploys":
 		err = a.runDeploys(ctx, args[1:])
+	case "timeline":
+		err = a.runTimeline(ctx, args[1:])
 	case "help":
 		switch {
 		case len(args) == 2 && args[1] == "endpoints":
@@ -114,6 +116,9 @@ func (a *App) Run(ctx context.Context, args []string) int {
 			return 0
 		case len(args) == 2 && args[1] == "deploys":
 			writeDeploysUsage(a.Stdout)
+			return 0
+		case len(args) == 2 && args[1] == "timeline":
+			writeTimelineUsage(a.Stdout)
 			return 0
 		default:
 			err = fmt.Errorf("unknown help topic: %w", errs.ErrInvalid)

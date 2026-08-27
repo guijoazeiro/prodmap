@@ -135,6 +135,10 @@ Slice 3.2 derives deployment/runtime association during `deploys` queries from
 immutable runtime identity in a bounded confirmation window; it remains inferred,
 non-causal, and is never persisted as a deployment conclusion.
 
+Slice 3.3 adds `prodmap timeline`, a dynamic, paginated merge of declared
+deployment events and observed runtime events. Declared rollbacks and concurrent
+deployments remain visible but never imply a causal runtime effect.
+
 Metrics/logs ingestion, a live receiver in Prodmap, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 
 ## Specifications

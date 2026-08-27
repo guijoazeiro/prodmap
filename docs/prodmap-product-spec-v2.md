@@ -794,6 +794,10 @@ correlação deployment/runtime.
 identidade imutável, environment, serviço e janela temporal; a relação é
 inferida, não causal e não é persistida.
 
+**Slice 3.3 materializada:** `timeline` une dinamicamente eventos declarados de
+deployment e observações runtime, preservando concorrência e rollback declarado
+sem afirmar efeito de runtime ou causalidade.
+
 Entregas:
 
 - contrato `DeploymentSource`;
