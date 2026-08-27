@@ -159,6 +159,31 @@ func TestFetchRejectsSanitizedErrorsAndRetries(t *testing.T) {
 	}
 }
 
+func TestRetryableStatusPolicy(t *testing.T) {
+	tests := []struct {
+		name, rateLimitRemaining string
+		status                   int
+		want                     bool
+	}{
+		{name: "500", status: http.StatusInternalServerError, want: true},
+		{name: "502", status: http.StatusBadGateway, want: true},
+		{name: "503", status: http.StatusServiceUnavailable, want: true},
+		{name: "504", status: http.StatusGatewayTimeout, want: true},
+		{name: "501", status: http.StatusNotImplemented, want: false},
+		{name: "ordinary 403", status: http.StatusForbidden, want: false},
+		{name: "rate limited 403", status: http.StatusForbidden, rateLimitRemaining: "0", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := &http.Response{StatusCode: tt.status, Header: make(http.Header)}
+			response.Header.Set("X-RateLimit-Remaining", tt.rateLimitRemaining)
+			if got := retryable(response); got != tt.want {
+				t.Fatalf("retryable(%d, %q)=%t want=%t", tt.status, tt.rateLimitRemaining, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFetchRejectsUnsafeArtifactAndLedgerInputs(t *testing.T) {
 	ledger := fixtureLedger(t)
 	valid := ledgerZIP(t, map[string][]byte{"deployments.jsonl": ledger})

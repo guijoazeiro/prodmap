@@ -401,7 +401,15 @@ func (source *Source) getResponse(ctx context.Context, endpoint *url.URL, includ
 }
 
 func retryable(response *http.Response) bool {
-	return response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 && response.StatusCode <= 504 || response.StatusCode == http.StatusForbidden && response.Header.Get("X-RateLimit-Remaining") == "0"
+	if response.StatusCode == http.StatusForbidden {
+		return response.Header.Get("X-RateLimit-Remaining") == "0"
+	}
+	switch response.StatusCode {
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusTooManyRequests:
+		return true
+	default:
+		return false
+	}
 }
 
 func retryDelay(header http.Header, now time.Time) time.Duration {
