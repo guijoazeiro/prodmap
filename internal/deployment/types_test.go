@@ -74,3 +74,32 @@ func TestValidateSnapshotRejectsForgedBoundaryData(t *testing.T) {
 		t.Fatalf("forged fingerprint error = %v", err)
 	}
 }
+
+func TestRuntimeAssociationClassifiesImmutableRuntimeEvidenceDeterministically(t *testing.T) {
+	start := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	image := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	input := RuntimeAssociationInput{DeploymentID: "deployment", ArtifactImageID: image, Start: start, End: start.Add(MaxRuntimeConfirmationDelay), EndReason: "max_confirmation_delay", Candidates: []RuntimeCandidate{{ID: "runtime-b", SourceID: "docker", ExternalID: "b", ImageID: image, ObservedAt: start.Add(time.Minute), State: "unhealthy", Health: "unhealthy"}, {ID: "runtime-a", SourceID: "docker", ExternalID: "a", ImageID: image, ObservedAt: start, State: "stopped", Health: "none"}}}
+	result := EvaluateRuntimeAssociation(input)
+	if result.Status != "MATCHED" || result.Confidence != "HIGH" || result.CandidateInstances != 2 || result.MatchedInstances != 2 || result.ContradictedInstances != 0 || result.RuntimeInstances[0].ID != "runtime-a" {
+		t.Fatalf("association = %#v", result)
+	}
+	input.Candidates[1].ImageID = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	result = EvaluateRuntimeAssociation(input)
+	if result.Status != "PARTIAL" || result.Confidence != "MEDIUM" || result.ContradictedInstances != 1 {
+		t.Fatalf("mixed association = %#v", result)
+	}
+	input.Concurrent = true
+	result = EvaluateRuntimeAssociation(input)
+	if result.Status != "UNKNOWN" || result.Confidence != "UNKNOWN" {
+		t.Fatalf("concurrent association = %#v", result)
+	}
+}
+
+func TestRuntimeAssociationCandidateLimitStaysUnknown(t *testing.T) {
+	start := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	image := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	result := EvaluateRuntimeAssociation(RuntimeAssociationInput{DeploymentID: "deployment", ArtifactImageID: image, Start: start, End: start.Add(MaxRuntimeConfirmationDelay), EndReason: "max_confirmation_delay", CandidateLimitExceeded: true, Candidates: []RuntimeCandidate{{ID: "runtime", SourceID: "docker", ExternalID: "runtime", ImageID: image, ObservedAt: start}}})
+	if result.Status != "UNKNOWN" || result.Confidence != "UNKNOWN" || len(result.RuntimeInstances) != 0 || len(result.Evidence) != 0 {
+		t.Fatalf("limited association = %#v", result)
+	}
+}

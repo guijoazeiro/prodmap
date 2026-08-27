@@ -129,7 +129,11 @@ match, causality, baseline, or regression:
 The input contract is [deployment-ledger-jsonl/v1](docs/contracts/deployment-ledger-jsonl-v1.md).
 Replay is idempotent, append-only ledgers may add records, and changed deployment
 identities conflict rather than overwrite history. The slice has no Build entity,
-timeline, remote deployment source, or deployment/runtime correlation.
+timeline or remote deployment source.
+
+Slice 3.2 derives deployment/runtime association during `deploys` queries from
+immutable runtime identity in a bounded confirmation window; it remains inferred,
+non-causal, and is never persisted as a deployment conclusion.
 
 Metrics/logs ingestion, a live receiver in Prodmap, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 

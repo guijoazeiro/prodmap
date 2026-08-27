@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/guijoazeiro/prodmap/internal/correlation"
 	"github.com/guijoazeiro/prodmap/internal/deployment"
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	"github.com/guijoazeiro/prodmap/internal/identity"
@@ -295,7 +296,7 @@ func (s *Store) Deployments(ctx context.Context, query deployment.Query) (deploy
 		return deployment.QueryResult{}, err
 	}
 	result := deployment.QueryResult{Since: query.Since.UTC(), Until: query.Until.UTC(), Environment: environment, Items: []deployment.Deployment{}}
-	statement := `SELECT id,external_id,environment,service_key,status,strategy,started_at,finished_at,artifact_id,artifact_repo_digest,artifact_image_id,commit_id,commit_sha,commit_verified,provenance_status,confidence_level,confidence_basis,limitations_json FROM deployments WHERE environment=? AND started_at>=? AND started_at<? AND (?='' OR service_key=?) AND (?='' OR status=?) AND (started_at<? OR (started_at=? AND id<?)) ORDER BY started_at DESC,id DESC LIMIT ?`
+	statement := `SELECT d.id,d.external_id,d.environment,d.service_key,d.status,d.strategy,d.started_at,d.finished_at,d.artifact_id,d.artifact_repo_digest,d.artifact_image_id,d.commit_id,d.commit_sha,d.commit_verified,d.provenance_status,d.confidence_level,d.confidence_basis,d.limitations_json,(SELECT MIN(n.started_at) FROM deployments n WHERE n.environment=d.environment AND n.service_key=d.service_key AND n.started_at>d.started_at),EXISTS(SELECT 1 FROM deployments c WHERE c.environment=d.environment AND c.service_key=d.service_key AND c.started_at=d.started_at AND c.id<>d.id) FROM deployments d WHERE environment=? AND started_at>=? AND started_at<? AND (?='' OR service_key=?) AND (?='' OR status=?) AND (started_at<? OR (started_at=? AND id<?)) ORDER BY started_at DESC,id DESC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, statement, environment, formatTime(query.Since), formatTime(query.Until), query.Service, query.Service, query.Status, query.Status, cursor.StartedAt, cursor.StartedAt, cursor.ID, query.Limit+1)
 	if err != nil {
 		return result, fmt.Errorf("%w: query deployments: %w", errs.ErrUnavailable, err)
@@ -304,10 +305,11 @@ func (s *Store) Deployments(ctx context.Context, query deployment.Query) (deploy
 	ids := []string{}
 	for rows.Next() {
 		var item deployment.Deployment
-		var finished, artifactID, repoDigest, commitID, commitSHA sql.NullString
+		var finished, artifactID, repoDigest, commitID, commitSHA, nextStarted sql.NullString
 		var verified int
+		var concurrent int
 		var started, limitations string
-		if err := rows.Scan(&item.ID, &item.ExternalID, &item.Environment, &item.Service, &item.Status, &item.Strategy, &started, &finished, &artifactID, &repoDigest, &item.Provenance.ImageID, &commitID, &commitSHA, &verified, &item.Provenance.Status, &item.Provenance.Confidence, &item.Provenance.Basis, &limitations); err != nil {
+		if err := rows.Scan(&item.ID, &item.ExternalID, &item.Environment, &item.Service, &item.Status, &item.Strategy, &started, &finished, &artifactID, &repoDigest, &item.Provenance.ImageID, &commitID, &commitSHA, &verified, &item.Provenance.Status, &item.Provenance.Confidence, &item.Provenance.Basis, &limitations, &nextStarted, &concurrent); err != nil {
 			return result, fmt.Errorf("%w: scan deployment: %w", errs.ErrIncompatible, err)
 		}
 		item.StartedAt, err = parseTime(started)
@@ -326,6 +328,14 @@ func (s *Store) Deployments(ctx context.Context, query deployment.Query) (deploy
 		item.Provenance.CommitID = stringPointer(commitID)
 		item.Provenance.CommitSHA = stringPointer(commitSHA)
 		item.Provenance.Verified = verified != 0
+		item.Concurrent = concurrent != 0
+		if nextStarted.Valid {
+			value, parseErr := parseTime(nextStarted.String)
+			if parseErr != nil {
+				return result, parseErr
+			}
+			item.NextDeploymentAt = new(value)
+		}
 		if err := json.Unmarshal([]byte(limitations), &item.Provenance.Limitations); err != nil {
 			return result, fmt.Errorf("%w: decode deployment limitations", errs.ErrIncompatible)
 		}
@@ -366,7 +376,127 @@ func (s *Store) Deployments(ctx context.Context, query deployment.Query) (deploy
 	if err := evidenceRows.Err(); err != nil {
 		return result, err
 	}
+	if err := s.attachRuntimeAssociations(ctx, &result); err != nil {
+		return result, err
+	}
 	return result, nil
+}
+
+func (s *Store) attachRuntimeAssociations(ctx context.Context, result *deployment.QueryResult) error {
+	if len(result.Items) == 0 {
+		return nil
+	}
+	services := make([]string, 0, len(result.Items))
+	seen := map[string]struct{}{}
+	for _, item := range result.Items {
+		if _, ok := seen[item.Service]; !ok {
+			seen[item.Service] = struct{}{}
+			services = append(services, item.Service)
+		}
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(services)), ",")
+	earliestStart := result.Items[0].StartedAt
+	for _, item := range result.Items[1:] {
+		if item.StartedAt.Before(earliestStart) {
+			earliestStart = item.StartedAt
+		}
+	}
+	args := []any{correlation.AlgorithmVersion, result.Environment, formatTime(result.Until), formatTime(earliestStart)}
+	args = append(args, stringSliceArgs(services)...)
+	args = append(args, deployment.MaxRuntimeCandidatesPerPage+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.source_id,r.external_id,s.logical_key,r.observed_at,r.valid_from,COALESCE(r.valid_to,''),r.state,r.health,COALESCE(r.image_id,''),COALESCE(r.image_digest,''),a.identity,COALESCE(cm.sha,'') FROM runtime_instances r JOIN services s ON s.id=r.service_id JOIN artifacts a ON a.id=r.artifact_id LEFT JOIN correlations c ON c.runtime_id=r.id AND c.is_current=1 AND c.algorithm_version=? LEFT JOIN commits cm ON cm.id=c.commit_id WHERE s.environment=? AND r.valid_from<? AND (r.valid_to IS NULL OR r.valid_to>?) AND s.logical_key IN (`+placeholders+`) ORDER BY s.logical_key,r.observed_at,r.id LIMIT ?`, args...)
+	if err != nil {
+		return fmt.Errorf("%w: query runtime association candidates", errs.ErrUnavailable)
+	}
+	defer rows.Close()
+	byService := map[string][]deployment.RuntimeCandidate{}
+	pageCandidateCount := 0
+	for rows.Next() {
+		var candidate deployment.RuntimeCandidate
+		var service, observed, validFrom, validTo string
+		if err := rows.Scan(&candidate.ID, &candidate.SourceID, &candidate.ExternalID, &service, &observed, &validFrom, &validTo, &candidate.State, &candidate.Health, &candidate.ImageID, &candidate.ImageDigest, &candidate.ArtifactIdentity, &candidate.CommitSHA); err != nil {
+			return fmt.Errorf("%w: scan runtime association candidate", errs.ErrIncompatible)
+		}
+		candidate.ObservedAt, err = parseTime(observed)
+		if err != nil {
+			return err
+		}
+		candidate.ValidFrom, err = parseTime(validFrom)
+		if err != nil {
+			return err
+		}
+		if validTo != "" {
+			value, parseErr := parseTime(validTo)
+			if parseErr != nil {
+				return parseErr
+			}
+			candidate.ValidTo = new(value)
+		}
+		byService[service] = append(byService[service], candidate)
+		pageCandidateCount++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("%w: iterate runtime association candidates", errs.ErrUnavailable)
+	}
+	pageCandidateLimitExceeded := pageCandidateCount > deployment.MaxRuntimeCandidatesPerPage
+	for index := range result.Items {
+		item := &result.Items[index]
+		end, reason := runtimeConfirmationWindow(item.StartedAt, item.NextDeploymentAt, result.Until)
+		candidates := []deployment.RuntimeCandidate{}
+		for _, candidate := range byService[item.Service] {
+			if !candidate.ObservedAt.Before(item.StartedAt) && candidate.ObservedAt.Before(end) {
+				candidates = append(candidates, candidate)
+			}
+		}
+		preexisting := false
+		deploymentIDs := runtimeImmutableIDs(item.Provenance.RepoDigest, item.Provenance.ImageID)
+		for _, candidate := range byService[item.Service] {
+			if candidate.ObservedAt.Before(item.StartedAt) && runtimeCandidateValidAt(candidate, item.StartedAt) && runtimeIDsIntersect(deploymentIDs, runtimeImmutableIDs(nil, candidate.ImageID, candidate.ImageDigest, candidate.ArtifactIdentity)) {
+				preexisting = true
+			}
+		}
+		item.RuntimeAssociation = deployment.EvaluateRuntimeAssociation(deployment.RuntimeAssociationInput{DeploymentID: item.ID, ArtifactRepoDigest: item.Provenance.RepoDigest, ArtifactImageID: item.Provenance.ImageID, CommitSHA: item.Provenance.CommitSHA, CommitVerified: item.Provenance.Verified, Start: item.StartedAt, End: end, EndReason: reason, Concurrent: item.Concurrent, Future: item.StartedAt.After(result.Until), Preexisting: preexisting, CandidateLimitExceeded: pageCandidateLimitExceeded || len(candidates) > deployment.MaxRuntimeCandidatesPerDeployment, Candidates: candidates})
+	}
+	return nil
+}
+
+func runtimeConfirmationWindow(start time.Time, next *time.Time, until time.Time) (time.Time, string) {
+	end, reason := start.Add(deployment.MaxRuntimeConfirmationDelay), "max_confirmation_delay"
+	if !until.After(end) {
+		end, reason = until, "query_until"
+	}
+	if next != nil && !next.After(end) {
+		end, reason = *next, "next_deployment"
+	}
+	return end, reason
+}
+
+func runtimeCandidateValidAt(candidate deployment.RuntimeCandidate, at time.Time) bool {
+	return !candidate.ValidFrom.After(at) && (candidate.ValidTo == nil || candidate.ValidTo.After(at))
+}
+
+func runtimeImmutableIDs(repo *string, values ...string) map[string]struct{} {
+	result := map[string]struct{}{}
+	if repo != nil {
+		_, digest, ok := strings.Cut(*repo, "@")
+		if ok {
+			result[digest] = struct{}{}
+		}
+	}
+	for _, value := range values {
+		if value != "" {
+			result[value] = struct{}{}
+		}
+	}
+	return result
+}
+func runtimeIDsIntersect(left, right map[string]struct{}) bool {
+	for value := range left {
+		if _, ok := right[value]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeDeploymentCursor(query deployment.Query) (deploymentCursor, error) {

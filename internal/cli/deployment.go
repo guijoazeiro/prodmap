@@ -85,26 +85,55 @@ type deploymentIngestOutput struct {
 	IdempotentReplay    bool   `json:"idempotent_replay"`
 }
 type deploysOutput struct {
-	Since       string             `json:"since"`
-	Until       string             `json:"until"`
-	Environment string             `json:"environment"`
-	Items       []deploymentOutput `json:"items"`
+	Since                string             `json:"since"`
+	Until                string             `json:"until"`
+	Environment          string             `json:"environment"`
+	Items                []deploymentOutput `json:"items"`
+	RuntimeEvidenceUntil string             `json:"runtime_evidence_until"`
 }
 type deploysPagination struct {
 	Limit      int     `json:"limit"`
 	NextCursor *string `json:"next_cursor"`
 }
 type deploymentOutput struct {
-	ID               string           `json:"id"`
-	ExternalID       string           `json:"external_id"`
-	Environment      string           `json:"environment"`
-	Service          string           `json:"service"`
-	Status           string           `json:"status"`
-	Strategy         string           `json:"strategy"`
-	StartedAt        string           `json:"started_at"`
-	FinishedAt       *string          `json:"finished_at"`
-	CausalityClaimed bool             `json:"causality_claimed"`
-	Provenance       provenanceOutput `json:"provenance"`
+	ID                 string                             `json:"id"`
+	ExternalID         string                             `json:"external_id"`
+	Environment        string                             `json:"environment"`
+	Service            string                             `json:"service"`
+	Status             string                             `json:"status"`
+	Strategy           string                             `json:"strategy"`
+	StartedAt          string                             `json:"started_at"`
+	FinishedAt         *string                            `json:"finished_at"`
+	CausalityClaimed   bool                               `json:"causality_claimed"`
+	Provenance         provenanceOutput                   `json:"provenance"`
+	RuntimeAssociation deploymentRuntimeAssociationOutput `json:"runtime_association"`
+}
+type deploymentRuntimeAssociationOutput struct {
+	Status                string                       `json:"status"`
+	RelationType          string                       `json:"relation_type"`
+	Confidence            confidenceOutput             `json:"confidence"`
+	AlgorithmVersion      string                       `json:"algorithm_version"`
+	Window                runtimeWindowOutput          `json:"window"`
+	CandidateInstances    int                          `json:"candidate_instances"`
+	MatchedInstances      int                          `json:"matched_instances"`
+	ContradictedInstances int                          `json:"contradicted_instances"`
+	RuntimeInstances      []runtimeInstanceOutput      `json:"runtime_instances"`
+	Evidence              []deployment.RuntimeEvidence `json:"evidence"`
+	Limitations           []string                     `json:"limitations"`
+	CausalityClaimed      bool                         `json:"causality_claimed"`
+}
+type runtimeWindowOutput struct {
+	Start     string `json:"start"`
+	End       string `json:"end"`
+	EndReason string `json:"end_reason"`
+}
+type runtimeInstanceOutput struct {
+	ID            string `json:"id"`
+	ObservedAt    string `json:"observed_at"`
+	State         string `json:"state"`
+	Health        string `json:"health"`
+	ArtifactMatch bool   `json:"artifact_match"`
+	CommitMatch   bool   `json:"commit_match"`
 }
 type provenanceOutput struct {
 	Status      string                `json:"status"`
@@ -183,9 +212,14 @@ func (a *App) runDeploys(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("query deployments: %w", err)
 	}
-	output := deploysOutput{Since: result.Since.Format(time.RFC3339Nano), Until: result.Until.Format(time.RFC3339Nano), Environment: result.Environment, Items: make([]deploymentOutput, 0, len(result.Items))}
+	output := deploysOutput{Since: result.Since.Format(time.RFC3339Nano), Until: result.Until.Format(time.RFC3339Nano), Environment: result.Environment, RuntimeEvidenceUntil: result.Until.Format(time.RFC3339Nano), Items: make([]deploymentOutput, 0, len(result.Items))}
 	for _, item := range result.Items {
-		entry := deploymentOutput{ID: item.ID, ExternalID: item.ExternalID, Environment: item.Environment, Service: item.Service, Status: item.Status, Strategy: item.Strategy, StartedAt: item.StartedAt.Format(time.RFC3339Nano), CausalityClaimed: false, Provenance: provenanceOutput{Status: item.Provenance.Status, Confidence: confidenceOutput{Level: item.Provenance.Confidence, Basis: item.Provenance.Basis}, Artifact: artifactOutput{ID: item.Provenance.ArtifactID, RepoDigest: item.Provenance.RepoDigest, ImageID: item.Provenance.ImageID}, Commit: commitOutput{ID: item.Provenance.CommitID, SHA: item.Provenance.CommitSHA, Verified: item.Provenance.Verified}, Evidence: item.Provenance.Evidence, Limitations: item.Provenance.Limitations}}
+		association := item.RuntimeAssociation
+		runtimes := make([]runtimeInstanceOutput, 0, len(association.RuntimeInstances))
+		for _, runtime := range association.RuntimeInstances {
+			runtimes = append(runtimes, runtimeInstanceOutput{ID: runtime.ID, ObservedAt: runtime.ObservedAt.Format(time.RFC3339Nano), State: runtime.State, Health: runtime.Health, ArtifactMatch: runtime.ArtifactMatch, CommitMatch: runtime.CommitMatch})
+		}
+		entry := deploymentOutput{ID: item.ID, ExternalID: item.ExternalID, Environment: item.Environment, Service: item.Service, Status: item.Status, Strategy: item.Strategy, StartedAt: item.StartedAt.Format(time.RFC3339Nano), CausalityClaimed: false, Provenance: provenanceOutput{Status: item.Provenance.Status, Confidence: confidenceOutput{Level: item.Provenance.Confidence, Basis: item.Provenance.Basis}, Artifact: artifactOutput{ID: item.Provenance.ArtifactID, RepoDigest: item.Provenance.RepoDigest, ImageID: item.Provenance.ImageID}, Commit: commitOutput{ID: item.Provenance.CommitID, SHA: item.Provenance.CommitSHA, Verified: item.Provenance.Verified}, Evidence: item.Provenance.Evidence, Limitations: item.Provenance.Limitations}, RuntimeAssociation: deploymentRuntimeAssociationOutput{Status: association.Status, RelationType: "INFERRED", Confidence: confidenceOutput{Level: association.Confidence, Basis: association.Basis}, AlgorithmVersion: association.AlgorithmVersion, Window: runtimeWindowOutput{Start: association.WindowStart.Format(time.RFC3339Nano), End: association.WindowEnd.Format(time.RFC3339Nano), EndReason: association.WindowEndReason}, CandidateInstances: association.CandidateInstances, MatchedInstances: association.MatchedInstances, ContradictedInstances: association.ContradictedInstances, RuntimeInstances: runtimes, Evidence: association.Evidence, Limitations: association.Limitations, CausalityClaimed: false}}
 		if item.FinishedAt != nil {
 			value := item.FinishedAt.Format(time.RFC3339Nano)
 			entry.FinishedAt = &value
@@ -198,7 +232,7 @@ func (a *App) runDeploys(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(a.Stdout, "Deployments: %s [%s,%s)\n", output.Environment, output.Since, output.Until)
 	for _, item := range output.Items {
-		fmt.Fprintf(a.Stdout, "%s  %s  %s  %s  %s\n", item.StartedAt, item.Service, item.Status, item.Provenance.Status, item.Provenance.Confidence.Level)
+		fmt.Fprintf(a.Stdout, "%s  %s  %s  %s  %s  %s\n", item.StartedAt, item.Service, item.Status, item.Provenance.Status, item.RuntimeAssociation.Status, item.RuntimeAssociation.Confidence.Level)
 	}
 	return nil
 }

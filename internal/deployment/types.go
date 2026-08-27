@@ -22,13 +22,18 @@ import (
 )
 
 const (
-	Format                   = "deployment-ledger-jsonl/v1"
-	AlgorithmVersion         = "deployment-ledger/v1"
-	FingerprintVersion       = "sha256-v1"
-	MaxFileBytes       int64 = 16 << 20
-	MaxLineBytes             = 1 << 20
-	MaxRecords               = 10000
+	Format                                  = "deployment-ledger-jsonl/v1"
+	AlgorithmVersion                        = "deployment-ledger/v1"
+	FingerprintVersion                      = "sha256-v1"
+	MaxFileBytes                      int64 = 16 << 20
+	MaxLineBytes                            = 1 << 20
+	MaxRecords                              = 10000
+	RuntimeAlgorithmVersion                 = "deployment-runtime/v1"
+	MaxRuntimeCandidatesPerDeployment       = 100
+	MaxRuntimeCandidatesPerPage             = 10000
 )
+
+const MaxRuntimeConfirmationDelay = 30 * time.Minute
 
 type Record struct {
 	DeploymentID        string
@@ -94,15 +99,183 @@ type Provenance struct {
 }
 
 type Deployment struct {
-	ID          string
-	ExternalID  string
-	Environment string
-	Service     string
-	Status      string
-	Strategy    string
-	StartedAt   time.Time
-	FinishedAt  *time.Time
-	Provenance  Provenance
+	ID                 string
+	ExternalID         string
+	Environment        string
+	Service            string
+	Status             string
+	Strategy           string
+	StartedAt          time.Time
+	FinishedAt         *time.Time
+	Provenance         Provenance
+	RuntimeAssociation RuntimeAssociation
+	NextDeploymentAt   *time.Time
+	Concurrent         bool
+}
+
+// RuntimeCandidate is sanitized runtime evidence supplied by a query adapter.
+type RuntimeCandidate struct {
+	ID, SourceID, ExternalID, ImageID, ImageDigest, ArtifactIdentity, CommitSHA string
+	ObservedAt, ValidFrom                                                       time.Time
+	ValidTo                                                                     *time.Time
+	State, Health                                                               string
+	Preexisting                                                                 bool
+}
+
+type RuntimeEvidence struct {
+	Fingerprint string    `json:"fingerprint"`
+	Kind        string    `json:"kind"`
+	Subject     string    `json:"subject"`
+	Claim       string    `json:"claim"`
+	Polarity    string    `json:"polarity"`
+	Source      string    `json:"source"`
+	ObservedAt  time.Time `json:"observed_at"`
+}
+
+type AssociatedRuntime struct {
+	ID                         string
+	ObservedAt                 time.Time
+	State, Health              string
+	ArtifactMatch, CommitMatch bool
+}
+
+type RuntimeAssociation struct {
+	Status, Confidence, Basis, AlgorithmVersion                 string
+	WindowStart, WindowEnd                                      time.Time
+	WindowEndReason                                             string
+	CandidateInstances, MatchedInstances, ContradictedInstances int
+	RuntimeInstances                                            []AssociatedRuntime
+	Evidence                                                    []RuntimeEvidence
+	Limitations                                                 []string
+	CausalityClaimed                                            bool
+}
+
+type RuntimeAssociationInput struct {
+	DeploymentID                                            string
+	ArtifactRepoDigest                                      *string
+	ArtifactImageID                                         string
+	CommitSHA                                               *string
+	CommitVerified                                          bool
+	Start, End                                              time.Time
+	EndReason                                               string
+	Concurrent, CandidateLimitExceeded, Future, Preexisting bool
+	Candidates                                              []RuntimeCandidate
+}
+
+// EvaluateRuntimeAssociation is deterministic and deliberately non-causal.
+func EvaluateRuntimeAssociation(input RuntimeAssociationInput) RuntimeAssociation {
+	result := RuntimeAssociation{Status: "UNKNOWN", Confidence: "UNKNOWN", Basis: "no compatible runtime evidence", AlgorithmVersion: RuntimeAlgorithmVersion, WindowStart: input.Start.UTC(), WindowEnd: input.End.UTC(), WindowEndReason: input.EndReason, RuntimeInstances: []AssociatedRuntime{}, Evidence: []RuntimeEvidence{}, Limitations: []string{}, CausalityClaimed: false}
+	if input.Concurrent {
+		result.Limitations = append(result.Limitations, "concurrent deployments prevent exclusive runtime association")
+		return result
+	}
+	if input.Future {
+		result.Limitations = append(result.Limitations, "deployment is after query evidence horizon")
+		return result
+	}
+	if !input.End.After(input.Start) {
+		result.WindowEndReason = "empty_window"
+		result.Limitations = append(result.Limitations, "runtime confirmation window is empty")
+		return result
+	}
+	if input.CandidateLimitExceeded {
+		result.Limitations = append(result.Limitations, "runtime candidate limit exceeded")
+		return result
+	}
+	seen := map[string]struct{}{}
+	candidates := slices.Clone(input.Candidates)
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].ObservedAt.Equal(candidates[j].ObservedAt) {
+			return candidates[i].ObservedAt.Before(candidates[j].ObservedAt)
+		}
+		return candidates[i].ID < candidates[j].ID
+	})
+	deployIDs := immutableIDs(input.ArtifactRepoDigest, input.ArtifactImageID)
+	for _, candidate := range candidates {
+		key := candidate.SourceID + "\x00" + candidate.ExternalID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		runtimeIDs := immutableIDs(nil, candidate.ImageID, candidate.ImageDigest, candidate.ArtifactIdentity)
+		artifactMatch, comparable := intersects(deployIDs, runtimeIDs), len(deployIDs) > 0 && len(runtimeIDs) > 0
+		commitMatch, commitConflict := false, false
+		if input.CommitVerified && input.CommitSHA != nil && candidate.CommitSHA != "" {
+			commitMatch = *input.CommitSHA == candidate.CommitSHA
+			commitConflict = !commitMatch
+		}
+		entry := AssociatedRuntime{ID: candidate.ID, ObservedAt: candidate.ObservedAt.UTC(), State: candidate.State, Health: candidate.Health, ArtifactMatch: artifactMatch, CommitMatch: commitMatch}
+		result.RuntimeInstances = append(result.RuntimeInstances, entry)
+		result.CandidateInstances++
+		if artifactMatch && !commitConflict {
+			result.MatchedInstances++
+			result.Evidence = append(result.Evidence, runtimeEvidence(input.DeploymentID, candidate, "supports", "immutable artifact identity matched runtime observation"))
+			if candidate.Preexisting {
+				result.Limitations = append(result.Limitations, "artifact already observed before deployment")
+			}
+		} else if comparable || commitConflict {
+			result.ContradictedInstances++
+			result.Evidence = append(result.Evidence, runtimeEvidence(input.DeploymentID, candidate, "contradicts", "immutable artifact identity or verified commit differed from runtime observation"))
+		}
+	}
+	if result.CandidateInstances == 0 {
+		result.Limitations = append(result.Limitations, "no runtime observations in confirmation window")
+		return result
+	}
+	if result.MatchedInstances > 0 && result.ContradictedInstances > 0 {
+		result.Status, result.Confidence, result.Basis = "PARTIAL", "MEDIUM", "compatible and contradictory immutable runtime identities observed"
+		return result
+	}
+	if result.ContradictedInstances > 0 {
+		result.Status, result.Basis = "CONTRADICTED", "immutable runtime identity or verified commit contradicts deployment"
+		return result
+	}
+	if result.MatchedInstances > 0 {
+		if input.Preexisting || slices.ContainsFunc(candidates, func(candidate RuntimeCandidate) bool {
+			return candidate.Preexisting
+		}) {
+			result.Status, result.Confidence, result.Basis = "PARTIAL", "MEDIUM", "immutable artifact was already observed before deployment"
+			return result
+		}
+		result.Status, result.Confidence, result.Basis = "MATCHED", "HIGH", "immutable artifact identity observed in compatible runtime window"
+		return result
+	}
+	result.Limitations = append(result.Limitations, "runtime identity is not comparable to deployment identity")
+	return result
+}
+
+func runtimeEvidence(deploymentID string, candidate RuntimeCandidate, polarity, claim string) RuntimeEvidence {
+	identity := candidate.ImageID
+	if identity == "" {
+		identity = candidate.ImageDigest
+	}
+	payload := deploymentID + "\x00" + candidate.ID + "\x00" + identity + "\x00" + polarity + "\x00" + RuntimeAlgorithmVersion
+	digest := sha256.Sum256([]byte(payload))
+	return RuntimeEvidence{Fingerprint: FingerprintVersion + ":" + hex.EncodeToString(digest[:]), Kind: "identity", Subject: "runtime artifact", Claim: claim, Polarity: polarity, Source: "docker_runtime", ObservedAt: candidate.ObservedAt.UTC()}
+}
+
+func immutableIDs(repo *string, values ...string) map[string]struct{} {
+	result := map[string]struct{}{}
+	if repo != nil {
+		_, value, ok := strings.Cut(*repo, "@")
+		if ok && validImageIdentity(value) {
+			result[value] = struct{}{}
+		}
+	}
+	for _, value := range values {
+		if validImageIdentity(value) {
+			result[value] = struct{}{}
+		}
+	}
+	return result
+}
+func intersects(left, right map[string]struct{}) bool {
+	for value := range left {
+		if _, ok := right[value]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 type Query struct {

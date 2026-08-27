@@ -790,6 +790,10 @@ revisáveis. A Phase 4 permanece bloqueada até uma nova decisão explícita.
 idempotente e consulta `deploys`; não inclui Build, timeline, fonte remota ou
 correlação deployment/runtime.
 
+**Slice 3.2 materializada:** `deploys` deriva associação deployment/runtime por
+identidade imutável, environment, serviço e janela temporal; a relação é
+inferida, não causal e não é persistida.
+
 Entregas:
 
 - contrato `DeploymentSource`;
