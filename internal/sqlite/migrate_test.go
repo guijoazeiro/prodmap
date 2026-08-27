@@ -82,7 +82,7 @@ func TestOpenUpgradesFoundationDatabaseAppendOnly(t *testing.T) {
 	}
 	defer store.Close()
 	status, err := store.MigrationStatus(context.Background())
-	if err != nil || status.AppliedVersion != 3 || !status.Current {
+	if err != nil || status.AppliedVersion != 4 || !status.Current {
 		t.Fatalf("upgraded migration status = %+v, err=%v", status, err)
 	}
 	var count int
@@ -131,7 +131,7 @@ func TestOpenUpgradesDatabaseStartingAtMigrationTwo(t *testing.T) {
 	}
 	defer store.Close()
 	status, err := store.MigrationStatus(context.Background())
-	if err != nil || status.AppliedVersion != 3 || !status.Current {
+	if err != nil || status.AppliedVersion != 4 || !status.Current {
 		t.Fatalf("migration status=%+v err=%v", status, err)
 	}
 	var phaseOneRows int

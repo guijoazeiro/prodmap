@@ -150,7 +150,7 @@
       },
       "last_runtime_snapshot": "2026-08-19T12:00:00Z",
       "migrations": {
-        "message": "Migration version 3 of 3",
+                "message": "Migration version 4 of 4",
         "status": "pass"
       },
       "runtime_instances": 1,

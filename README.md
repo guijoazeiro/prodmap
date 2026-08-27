@@ -105,7 +105,41 @@ Use the same environment for Docker inventory and frozen telemetry:
 
 `services` reports `telemetry_observed` and `runtime_association`. An association is `MATCHED/HIGH` only when the allowlisted OCI image title and normalized OTel service identity match exactly in the same environment. The title is not secret, but arbitrary labels remain blocked. Without a title, association is `UNKNOWN`; image references, container names, and fuzzy matching are not evidence. Runtime association does not establish causality and is never `EXACT`.
 
-Metrics/logs ingestion, a live receiver in Prodmap, deployments, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
+## Temporal endpoint context
+
+`endpoints` reads materialized endpoint telemetry at a specific instant:
+
+```bash
+./bin/prodmap endpoints --service checkout-api --environment reference --at 2026-08-24T13:40:30Z --json
+```
+
+Only windows active in `[window_start, window_end)` are returned. Overlapping windows remain separate and are never summed; no active window is not evidence that traffic or an endpoint is absent.
+
+## Phase 3 Slice 3.1 — offline deployment ledger
+
+Phase 3 is authorized for limited learning. Slice 3.1 ingests a frozen deployment
+ledger atomically and exposes registered deployments without claiming a runtime
+match, causality, baseline, or regression:
+
+```bash
+./bin/prodmap deployments ingest --file deployments.jsonl --json
+./bin/prodmap deploys --environment reference --json
+```
+
+The input contract is [deployment-ledger-jsonl/v1](docs/contracts/deployment-ledger-jsonl-v1.md).
+Replay is idempotent, append-only ledgers may add records, and changed deployment
+identities conflict rather than overwrite history. The slice has no Build entity,
+timeline or remote deployment source.
+
+Slice 3.2 derives deployment/runtime association during `deploys` queries from
+immutable runtime identity in a bounded confirmation window; it remains inferred,
+non-causal, and is never persisted as a deployment conclusion.
+
+Slice 3.3 adds `prodmap timeline`, a dynamic, paginated merge of declared
+deployment events and observed runtime events. Declared rollbacks and concurrent
+deployments remain visible but never imply a causal runtime effect.
+
+Metrics/logs ingestion, a live receiver in Prodmap, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 
 ## Specifications
 

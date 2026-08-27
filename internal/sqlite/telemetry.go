@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -525,6 +527,138 @@ func nonNilTelemetryStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+type endpointCursor struct {
+	Version   int    `json:"v"`
+	Protocol  string `json:"p"`
+	Operation string `json:"o"`
+	Endpoint  string `json:"e"`
+	Signature string `json:"s"`
+}
+
+func (s *Store) EndpointContext(ctx context.Context, query telemetry.EndpointQuery) (telemetry.EndpointContext, error) {
+	if strings.TrimSpace(query.ServiceKey) == "" || query.At.IsZero() || query.Limit < 1 || query.Limit > 1000 {
+		return telemetry.EndpointContext{}, fmt.Errorf("%w: invalid endpoint query", errs.ErrInvalid)
+	}
+	environment, err := telemetry.ValidEnvironment(query.Environment)
+	if err != nil || environment != query.Environment {
+		return telemetry.EndpointContext{}, fmt.Errorf("%w: invalid endpoint environment", errs.ErrInvalid)
+	}
+	cursor, err := decodeEndpointCursor(query)
+	if err != nil {
+		return telemetry.EndpointContext{}, err
+	}
+	result := telemetry.EndpointContext{At: query.At.UTC(), Environment: environment, Items: []telemetry.EndpointRecord{}, Warnings: []string{}}
+	if err := s.db.QueryRowContext(ctx, `SELECT id,logical_key,display_name FROM services WHERE environment=? AND logical_key=?`, environment, strings.TrimSpace(query.ServiceKey)).Scan(&result.Service.ID, &result.Service.LogicalKey, &result.Service.DisplayName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return telemetry.EndpointContext{}, fmt.Errorf("%w: service %q was not found in environment %q", errs.ErrNotFound, query.ServiceKey, environment)
+		}
+		return telemetry.EndpointContext{}, fmt.Errorf("%w: resolve endpoint service: %w", errs.ErrUnavailable, err)
+	}
+	statement := `WITH page AS (
+		SELECT e.id,e.protocol,e.operation,e.route_template,e.first_seen_at,e.last_seen_at
+		FROM endpoints e
+		WHERE e.service_id=?
+		AND EXISTS (SELECT 1 FROM telemetry_windows active WHERE active.endpoint_id=e.id AND active.window_start<=? AND active.window_end>?)
+		AND (e.protocol>? OR (e.protocol=? AND (e.operation>? OR (e.operation=? AND e.id>?))))
+		ORDER BY e.protocol,e.operation,e.id LIMIT ?
+	)
+	SELECT p.id,p.protocol,p.operation,p.route_template,p.first_seen_at,p.last_seen_at,
+		w.id,w.ingestion_id,w.window_start,w.window_end,w.request_count,w.error_count,w.duration_sum_ns,w.p50_ns,w.p95_ns,w.p99_ns,w.is_complete,w.coverage_ratio,w.algorithm_version
+	FROM page p JOIN telemetry_windows w ON w.endpoint_id=p.id
+	WHERE w.window_start<=? AND w.window_end>?
+	ORDER BY p.protocol,p.operation,p.id,w.window_start,w.window_end,w.ingestion_id,w.id`
+	rows, err := s.db.QueryContext(ctx, statement, result.Service.ID, formatTime(query.At), formatTime(query.At), cursor.Protocol, cursor.Protocol, cursor.Operation, cursor.Operation, cursor.Endpoint, query.Limit+1, formatTime(query.At), formatTime(query.At))
+	if err != nil {
+		return telemetry.EndpointContext{}, fmt.Errorf("%w: query active endpoint windows: %w", errs.ErrUnavailable, err)
+	}
+	defer rows.Close()
+	byID := make(map[string]int, query.Limit+1)
+	for rows.Next() {
+		var endpoint telemetry.EndpointRecord
+		var route sql.NullString
+		var firstSeen, lastSeen, start, end string
+		var window telemetry.EndpointWindow
+		var complete int
+		var coverage sql.NullFloat64
+		if err := rows.Scan(&endpoint.ID, &endpoint.Protocol, &endpoint.Operation, &route, &firstSeen, &lastSeen,
+			&window.ID, &window.IngestionID, &start, &end, &window.RequestCount, &window.ErrorCount, &window.DurationSumNS,
+			&window.P50NS, &window.P95NS, &window.P99NS, &complete, &coverage, &window.Algorithm); err != nil {
+			return telemetry.EndpointContext{}, fmt.Errorf("%w: scan active endpoint window: %w", errs.ErrIncompatible, err)
+		}
+		var parseErr error
+		endpoint.FirstSeenAt, parseErr = parseTime(firstSeen)
+		if parseErr == nil {
+			endpoint.LastSeenAt, parseErr = parseTime(lastSeen)
+		}
+		if parseErr == nil {
+			window.WindowStart, parseErr = parseTime(start)
+		}
+		if parseErr == nil {
+			window.WindowEnd, parseErr = parseTime(end)
+		}
+		if parseErr != nil {
+			return telemetry.EndpointContext{}, fmt.Errorf("%w: decode active endpoint window: %w", errs.ErrIncompatible, parseErr)
+		}
+		if route.Valid {
+			value := route.String
+			endpoint.RouteTemplate = &value
+		}
+		if coverage.Valid {
+			value := coverage.Float64
+			window.CoverageRatio = &value
+		}
+		window.IsComplete = complete != 0
+		index, found := byID[endpoint.ID]
+		if !found {
+			endpoint.Windows = []telemetry.EndpointWindow{}
+			result.Items = append(result.Items, endpoint)
+			index = len(result.Items) - 1
+			byID[endpoint.ID] = index
+		}
+		result.Items[index].Windows = append(result.Items[index].Windows, window)
+	}
+	if err := rows.Err(); err != nil {
+		return telemetry.EndpointContext{}, fmt.Errorf("%w: iterate active endpoint windows: %w", errs.ErrUnavailable, err)
+	}
+	if len(result.Items) > query.Limit {
+		last := result.Items[query.Limit-1]
+		result.NextCursor = encodeEndpointCursor(query, last)
+		result.Items = result.Items[:query.Limit]
+	}
+	if len(result.Items) == 0 {
+		result.TelemetryStatus = "NO_ACTIVE_WINDOW"
+		result.Warnings = []string{"No endpoint telemetry window is active at the requested instant; this does not prove absence of endpoints, traffic, or service activity."}
+		return result, nil
+	}
+	result.TelemetryStatus = "OBSERVED"
+	return result, nil
+}
+
+func endpointQuerySignature(query telemetry.EndpointQuery) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{query.ServiceKey, query.Environment, formatTime(query.At)}, "\x00")))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func encodeEndpointCursor(query telemetry.EndpointQuery, endpoint telemetry.EndpointRecord) string {
+	raw, _ := json.Marshal(endpointCursor{Version: 1, Protocol: endpoint.Protocol, Operation: endpoint.Operation, Endpoint: endpoint.ID, Signature: endpointQuerySignature(query)})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeEndpointCursor(query telemetry.EndpointQuery) (endpointCursor, error) {
+	if query.Cursor == "" {
+		return endpointCursor{}, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(query.Cursor)
+	if err != nil {
+		return endpointCursor{}, fmt.Errorf("%w: invalid endpoint cursor", errs.ErrInvalid)
+	}
+	var cursor endpointCursor
+	if err := json.Unmarshal(raw, &cursor); err != nil || cursor.Version != 1 || cursor.Protocol == "" || cursor.Operation == "" || cursor.Endpoint == "" || cursor.Signature != endpointQuerySignature(query) {
+		return endpointCursor{}, fmt.Errorf("%w: endpoint cursor does not belong to this query", errs.ErrInvalid)
+	}
+	return cursor, nil
 }
 
 func (s *Store) ResolveGraphRoots(ctx context.Context, environment, selector string, all bool) ([]topology.Node, error) {
