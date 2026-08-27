@@ -33,6 +33,29 @@ func TestDeploymentLedgerLoadIsDeterministicAndDoesNotExposePath(t *testing.T) {
 	}
 }
 
+func TestLoadGitHubActionsLedgerUsesLogicalSourceKey(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "deployment", "valid-two-services.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 26, 12, 1, 0, 0, time.UTC)
+	first, err := LoadGitHubActionsLedger(t.Context(), contents, "Acme", "Prodmap", "deployment-ledger", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := LoadGitHubActionsLedger(t.Context(), contents, "acme", "prodmap", "deployment-ledger", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := LoadGitHubActionsLedger(t.Context(), contents, "acme", "other", "deployment-ledger", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SourceKey != second.SourceKey || first.SourceKey == other.SourceKey || first.SourceHash != second.SourceHash || first.SourceKey == first.SourceHash {
+		t.Fatalf("source/hash separation first=%#v other=%#v", first, other)
+	}
+}
+
 func TestDeploymentLedgerLoadRejectsDuplicateAndSecret(t *testing.T) {
 	directory := t.TempDir()
 	duplicate := filepath.Join(directory, "duplicate.jsonl")

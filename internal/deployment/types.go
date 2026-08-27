@@ -64,6 +64,28 @@ type Snapshot struct {
 	Records    []Record
 }
 
+// SourceQuery describes the logical GitHub Actions artifact to fetch. It has no
+// transport credentials or HTTP details.
+type SourceQuery struct {
+	Owner, Repository, ArtifactName string
+	ObservedAt                      time.Time
+}
+
+// SourceResult carries only sanitized artifact metadata and a validated ledger.
+type SourceResult struct {
+	Repository, ArtifactName, ArtifactDigest, WorkflowHeadSHA string
+	ArtifactID, WorkflowRunID                                 int64
+	CreatedAt, UpdatedAt, ExpiresAt                           time.Time
+	Snapshot                                                  Snapshot
+	Warnings                                                  []string
+}
+
+// DeploymentSource is consumer-owned: implementations provide a validated
+// deployment-ledger snapshot and never expose transport responses.
+type DeploymentSource interface {
+	Fetch(context.Context, SourceQuery) (SourceResult, error)
+}
+
 type IngestResult struct {
 	IngestionID         string
 	SourceHash          string
@@ -391,9 +413,34 @@ func LoadFrozenFile(ctx context.Context, name string, observedAt time.Time) (Sna
 	if !utf8.Valid(contents) {
 		return Snapshot{}, fmt.Errorf("%w: ledger file has invalid UTF-8", errs.ErrInvalid)
 	}
-	hash := sha256.Sum256(contents)
 	pathHash := sha256.Sum256([]byte(filepath.Clean(abs)))
-	snapshot := Snapshot{SourceKey: "sha256:" + hex.EncodeToString(pathHash[:]), SourceHash: "sha256:" + hex.EncodeToString(hash[:]), Format: Format, ObservedAt: observedAt.UTC(), Records: []Record{}}
+	return loadLedgerContents(ctx, contents, "sha256:"+hex.EncodeToString(pathHash[:]), observedAt)
+}
+
+// LoadGitHubActionsLedger validates bytes already authenticated as the exact
+// deployments.jsonl member of a GitHub Actions artifact. Callers cannot choose
+// a SourceKey; it is derived from the logical remote source.
+func LoadGitHubActionsLedger(ctx context.Context, contents []byte, owner, repository, artifactName string, observedAt time.Time) (Snapshot, error) {
+	if !validGitHubSourcePart(owner, 100) || !validGitHubSourcePart(repository, 100) || !validGitHubArtifactName(artifactName) {
+		return Snapshot{}, fmt.Errorf("%w: invalid GitHub Actions source", errs.ErrInvalid)
+	}
+	payload := "github-actions-ledger/v1\x00" + strings.ToLower(owner) + "\x00" + strings.ToLower(repository) + "\x00" + artifactName
+	digest := sha256.Sum256([]byte(payload))
+	return loadLedgerContents(ctx, contents, "sha256:"+hex.EncodeToString(digest[:]), observedAt)
+}
+
+func loadLedgerContents(ctx context.Context, contents []byte, sourceKey string, observedAt time.Time) (Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	if int64(len(contents)) > MaxFileBytes {
+		return Snapshot{}, fmt.Errorf("%w: ledger file exceeds limit", errs.ErrInvalid)
+	}
+	if !utf8.Valid(contents) {
+		return Snapshot{}, fmt.Errorf("%w: ledger file has invalid UTF-8", errs.ErrInvalid)
+	}
+	hash := sha256.Sum256(contents)
+	snapshot := Snapshot{SourceKey: sourceKey, SourceHash: "sha256:" + hex.EncodeToString(hash[:]), Format: Format, ObservedAt: observedAt.UTC(), Records: []Record{}}
 	lines := strings.Split(string(contents), "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
@@ -628,6 +675,33 @@ func validSHA(value string) bool {
 	}
 	for _, c := range value {
 		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validGitHubSourcePart(value string, maximum int) bool {
+	if value == "" || len(value) > maximum || strings.Contains(value, "..") {
+		return false
+	}
+	for index, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+			return false
+		}
+		if index == 0 && (character == '-' || character == '_' || character == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func validGitHubArtifactName(value string) bool {
+	if value == "" || len(value) > 255 || strings.Contains(value, "..") || strings.ContainsAny(value, "/\\") || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
 			return false
 		}
 	}

@@ -341,6 +341,7 @@ As decisões executáveis estão registradas separadamente para manter o escopo 
 - [`ADR-020`](adr/020-offline-deployment-ledger.md): ledger de deployments offline, atômico e sem correlação com runtime.
 - [`ADR-021`](adr/021-deployment-runtime-correlation.md): associação deployment/runtime dinâmica, temporal e sem nova migration.
 - [`ADR-022`](adr/022-temporal-deployment-timeline.md): timeline temporal dinâmica de deployments e runtimes, sem eventos persistidos.
+- [`ADR-023`](adr/023-github-actions-deployment-artifact-source.md): fronteira segura para artifact GitHub Actions, sem CLI ou persistência.
 
 Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go` e exigiu nova revisão da tese ao final da Phase 2. A [Decision 002](decisions/002-phase-3-limited-learning.md) autoriza separadamente e somente a Phase 3 como aprendizado limitado; ela não é `go`, não valida a tese e mantém a Phase 4 bloqueada.
 

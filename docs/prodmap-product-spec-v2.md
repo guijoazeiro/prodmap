@@ -798,6 +798,11 @@ inferida, não causal e não é persistida.
 deployment e observações runtime, preservando concorrência e rollback declarado
 sem afirmar efeito de runtime ou causalidade.
 
+**Slice 3.4A materializada:** fronteira segura e testável para artifact GitHub
+Actions que transporta o contrato `deployment-ledger-jsonl/v1`; não infere
+deployment de workflow run e não inclui CLI, persistência ou smoke real. A
+Phase 3 não está concluída e a Phase 4 continua bloqueada.
+
 Entregas:
 
 - contrato `DeploymentSource`;

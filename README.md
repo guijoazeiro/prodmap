@@ -139,6 +139,11 @@ Slice 3.3 adds `prodmap timeline`, a dynamic, paginated merge of declared
 deployment events and observed runtime events. Declared rollbacks and concurrent
 deployments remain visible but never imply a causal runtime effect.
 
+Slice 3.4A adds only the testable GitHub Actions artifact boundary: it downloads
+and verifies a `deployment-ledger-jsonl/v1` artifact without treating workflow
+runs as deployments. CLI integration, persistence, and real GitHub validation
+remain reserved for Slice 3.4B.
+
 Metrics/logs ingestion, a live receiver in Prodmap, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
 
 ## Specifications
