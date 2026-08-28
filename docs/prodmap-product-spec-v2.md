@@ -784,7 +784,8 @@ permanecia pendente e a Phase 3 estava bloqueada até decisão explícita do own
 **Status atual:** **AUTHORIZED FOR LIMITED LEARNING** pela
 [Decision 002](decisions/002-phase-3-limited-learning.md). Esta autorização não
 é `go`, não valida a tese e permite implementação em slices verticais pequenas e
-revisáveis. A Phase 4 permanece bloqueada até uma nova decisão explícita.
+revisáveis. No momento da Decision 002, a Phase 4 permanecia bloqueada até nova
+decisão explícita.
 
 **Slice 3.1 materializada:** ledger offline versionado, ingestão SQLite atômica e
 idempotente e consulta `deploys`; não inclui Build, timeline, fonte remota ou
@@ -802,8 +803,9 @@ sem afirmar efeito de runtime ou causalidade.
 artifact GitHub Actions que transporta o contrato `deployment-ledger-jsonl/v1`,
 CLI/persistência atômica do ledger e workflow controlado para publicação e sync.
 O [Phase 3 Technical Gate Review](reviews/phase-3-gate-review.md) registra o
-PASS técnico limitado às evidências revisadas; não é `go`, não valida a tese e a
-Phase 4 continua bloqueada até decisão explícita do owner.
+PASS técnico limitado às evidências revisadas; não é `go` nem valida a tese. A
+[Decision 003](decisions/003-phase-4-limited-learning.md) autoriza depois a
+Phase 4 somente como aprendizado limitado; Phase 5 permanece bloqueada.
 
 Entregas:
 
@@ -818,6 +820,10 @@ Entregas:
 ### Phase 4 — Reliable Regression Detection
 
 **Objetivo:** detectar mudanças sem sacrificar credibilidade.
+
+**Status atual:** **AUTHORIZED FOR LIMITED LEARNING** pela
+[Decision 003](decisions/003-phase-4-limited-learning.md). Esta autorização não
+é `go`, não valida a tese e não autoriza a Phase 5.
 
 Entregas:
 

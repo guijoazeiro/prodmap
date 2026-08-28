@@ -148,3 +148,10 @@ Technical recommendation: continue only through option 3 and a new owner authori
 **Formal Phase -1 decision: NOT MADE**
 
 **Phase 4 authorization: BLOCKED PENDING OWNER DECISION**
+
+## Subsequent status
+
+The state above is the historical conclusion of this Phase 3 gate review. The
+later [Decision 003](../decisions/003-phase-4-limited-learning.md) authorizes
+Phase 4 only as limited learning; it does not alter this review's thesis or
+Phase -1 conclusions and keeps Phase 5 blocked.
