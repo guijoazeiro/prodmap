@@ -825,6 +825,12 @@ Entregas:
 [Decision 003](decisions/003-phase-4-limited-learning.md). Esta autorização não
 é `go`, não valida a tese e não autoriza a Phase 5.
 
+**Slice 4.1 implementada:** `prodmap baseline` oferece somente
+uma referência de telemetria anterior exata e consultada sob demanda. Ela não
+persiste baseline, não detecta regressão e não produz causalidade, `HIGH` ou
+`EXACT`; insuficiência, ambiguidade, contaminação e dados futuros resultam em
+`UNKNOWN`.
+
 Entregas:
 
 - baselines com confiança própria;

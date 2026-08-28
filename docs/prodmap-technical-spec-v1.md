@@ -660,7 +660,9 @@ updated_at      timestamp
 
 ### 3.13 Baseline
 
-**Disponibilidade prevista:** Phase 4. Permanece conceitual antes disso.
+**Disponibilidade prevista:** Phase 4. A Slice 4.1 implementa somente a consulta
+efêmera `previous_window` para service ou endpoint; ela não cria esta entidade
+nem persiste baselines, comparações ou regressões.
 
 ```text
 id                 UUIDv7 PK
@@ -959,18 +961,20 @@ Entrada:
 --service ou --endpoint exatamente um
 --metric required
 --window duration default 30m
---at timestamp default now
---method previous|historical|combined default combined
---history-windows integer default 7
+--at RFC3339 required
+--min-samples integer default 10
+--min-coverage float default 0.8
 ```
 
 Validação:
 
-- janela entre 5m e 24h;
-- mínimo de amostras e cobertura vêm da configuração;
-- histórico insuficiente não é preenchido artificialmente.
+- Slice 4.1 aceita somente `previous_window`, sem flag de método ou histórico;
+- a janela é exatamente `[at-window, at)` e deve existir uma única vez;
+- janela entre 5m e 24h; `min-samples` entre 1 e 1.000.000; cobertura entre 0 e 1;
+- histórico insuficiente, múltiplas janelas, contaminação por deployment e dados futuros retornam `UNKNOWN`.
 
-Saída: valor, dispersão, janelas usadas/rejeitadas, cobertura, confidence e justificativas.
+Saída: valor, janela usada/rejeitada, cobertura, confidence e justificativas;
+nenhum resultado é persistido e `HIGH`/`EXACT` não são permitidos.
 
 ## 13. `prodmap regression`
 

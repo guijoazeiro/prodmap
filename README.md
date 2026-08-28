@@ -143,9 +143,17 @@ Slice 3.4A delivered the bounded GitHub Actions HTTP artifact boundary. Slice
 3.4B1 delivers the explicit CLI and offline atomic persistence of a verified
 `deployment-ledger-jsonl/v1` artifact without treating workflow runs as
 deployments. Publication and a real GitHub smoke remain reserved for Slice
-3.4B2. Phase 4 remains blocked.
+3.4B2.
 
-Metrics/logs ingestion, a live receiver in Prodmap, baselines, regressions, generic export, MCP, and causal scoring remain out of scope. Experiment 001 has not been executed by this implementation.
+Phase 4 Slice 4.1 adds `prodmap baseline`: a read-only, exact prior-window
+reference for one service or endpoint metric. It reports `AVAILABLE/LOW` only
+for one eligible `[at-window,at)` telemetry window and otherwise reports
+`UNKNOWN`; it does not persist a baseline, detect regression, or claim
+causality. Phase 5 remains blocked.
+
+Metrics/logs ingestion, a live receiver in Prodmap, regression classification,
+generic export, MCP, and causal scoring remain out of scope. Experiment 001 has
+not been executed by this implementation.
 
 ## Specifications
 
