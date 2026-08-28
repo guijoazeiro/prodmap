@@ -64,6 +64,34 @@ type Snapshot struct {
 	Records    []Record
 }
 
+// SourceQuery describes the logical GitHub Actions artifact to fetch. It has no
+// transport credentials or HTTP details.
+type SourceQuery struct {
+	Owner, Repository, ArtifactName string
+	ObservedAt                      time.Time
+}
+
+// SourceResult carries only sanitized artifact metadata and a validated ledger.
+type SourceResult struct {
+	Repository, ArtifactName, ArtifactDigest, WorkflowHeadSHA string
+	ArtifactID, WorkflowRunID                                 int64
+	CreatedAt, UpdatedAt, ExpiresAt                           time.Time
+	Snapshot                                                  Snapshot
+	Warnings                                                  []string
+}
+
+type SyncResult struct {
+	Ingestion           IngestResult
+	SourceObservationID string
+	SourceExisting      bool
+}
+
+// DeploymentSource is consumer-owned: implementations provide a validated
+// deployment-ledger snapshot and never expose transport responses.
+type DeploymentSource interface {
+	Fetch(context.Context, SourceQuery) (SourceResult, error)
+}
+
 type IngestResult struct {
 	IngestionID         string
 	SourceHash          string
@@ -323,6 +351,42 @@ func ValidateSnapshot(snapshot Snapshot) error {
 	return nil
 }
 
+// ValidateSourceResult rechecks metadata supplied by a DeploymentSource before
+// persistence. The logical SourceKey is derived, never caller-selected.
+func ValidateSourceResult(result SourceResult) error {
+	if err := ValidateSnapshot(result.Snapshot); err != nil {
+		return err
+	}
+	owner, repository, ok := strings.Cut(result.Repository, "/")
+	if !ok || strings.Contains(repository, "/") || !validGitHubSourcePart(owner, 100) || !validGitHubSourcePart(repository, 100) || owner != strings.ToLower(owner) || repository != strings.ToLower(repository) || !validGitHubArtifactName(result.ArtifactName) || result.ArtifactID <= 0 || result.WorkflowRunID <= 0 || !validSHA256Value(result.ArtifactDigest) || !validGitHubWorkflowSHA(result.WorkflowHeadSHA) {
+		return fmt.Errorf("%w: invalid GitHub Actions deployment source result", errs.ErrInvalid)
+	}
+	for _, timestamp := range []time.Time{result.CreatedAt, result.UpdatedAt, result.ExpiresAt, result.Snapshot.ObservedAt} {
+		if timestamp.IsZero() || timestamp.Location() != time.UTC {
+			return fmt.Errorf("%w: invalid GitHub Actions source timestamp", errs.ErrInvalid)
+		}
+	}
+	if result.UpdatedAt.Before(result.CreatedAt) || !result.ExpiresAt.After(result.CreatedAt) {
+		return fmt.Errorf("%w: inconsistent GitHub Actions source timestamps", errs.ErrInvalid)
+	}
+	for _, record := range result.Snapshot.Records {
+		if record.VCSRevisionVerified && (record.VCSRevision != result.WorkflowHeadSHA || record.GitHead != result.WorkflowHeadSHA) {
+			return fmt.Errorf("%w: verified deployment revision does not match GitHub Actions workflow head", errs.ErrInvalid)
+		}
+	}
+	payload := "github-actions-ledger/v1\x00" + owner + "\x00" + repository + "\x00" + result.ArtifactName
+	digest := sha256.Sum256([]byte(payload))
+	if result.Snapshot.SourceKey != "sha256:"+hex.EncodeToString(digest[:]) || result.Warnings == nil {
+		return fmt.Errorf("%w: inconsistent GitHub Actions deployment source result", errs.ErrInvalid)
+	}
+	for _, warning := range result.Warnings {
+		if err := safeString("warning", warning, 512); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validSHA256Value(value string) bool {
 	return strings.HasPrefix(value, "sha256:") && len(value) == 71 && validHex(value[7:])
 }
@@ -391,9 +455,34 @@ func LoadFrozenFile(ctx context.Context, name string, observedAt time.Time) (Sna
 	if !utf8.Valid(contents) {
 		return Snapshot{}, fmt.Errorf("%w: ledger file has invalid UTF-8", errs.ErrInvalid)
 	}
-	hash := sha256.Sum256(contents)
 	pathHash := sha256.Sum256([]byte(filepath.Clean(abs)))
-	snapshot := Snapshot{SourceKey: "sha256:" + hex.EncodeToString(pathHash[:]), SourceHash: "sha256:" + hex.EncodeToString(hash[:]), Format: Format, ObservedAt: observedAt.UTC(), Records: []Record{}}
+	return loadLedgerContents(ctx, contents, "sha256:"+hex.EncodeToString(pathHash[:]), observedAt)
+}
+
+// LoadGitHubActionsLedger validates bytes already authenticated as the exact
+// deployments.jsonl member of a GitHub Actions artifact. Callers cannot choose
+// a SourceKey; it is derived from the logical remote source.
+func LoadGitHubActionsLedger(ctx context.Context, contents []byte, owner, repository, artifactName string, observedAt time.Time) (Snapshot, error) {
+	if !validGitHubSourcePart(owner, 100) || !validGitHubSourcePart(repository, 100) || !validGitHubArtifactName(artifactName) {
+		return Snapshot{}, fmt.Errorf("%w: invalid GitHub Actions source", errs.ErrInvalid)
+	}
+	payload := "github-actions-ledger/v1\x00" + strings.ToLower(owner) + "\x00" + strings.ToLower(repository) + "\x00" + artifactName
+	digest := sha256.Sum256([]byte(payload))
+	return loadLedgerContents(ctx, contents, "sha256:"+hex.EncodeToString(digest[:]), observedAt)
+}
+
+func loadLedgerContents(ctx context.Context, contents []byte, sourceKey string, observedAt time.Time) (Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
+	if int64(len(contents)) > MaxFileBytes {
+		return Snapshot{}, fmt.Errorf("%w: ledger file exceeds limit", errs.ErrInvalid)
+	}
+	if !utf8.Valid(contents) {
+		return Snapshot{}, fmt.Errorf("%w: ledger file has invalid UTF-8", errs.ErrInvalid)
+	}
+	hash := sha256.Sum256(contents)
+	snapshot := Snapshot{SourceKey: sourceKey, SourceHash: "sha256:" + hex.EncodeToString(hash[:]), Format: Format, ObservedAt: observedAt.UTC(), Records: []Record{}}
 	lines := strings.Split(string(contents), "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
@@ -628,6 +717,37 @@ func validSHA(value string) bool {
 	}
 	for _, c := range value {
 		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validGitHubWorkflowSHA(value string) bool {
+	return value != "unknown" && validSHA(value)
+}
+
+func validGitHubSourcePart(value string, maximum int) bool {
+	if value == "" || len(value) > maximum || strings.Contains(value, "..") {
+		return false
+	}
+	for index, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+			return false
+		}
+		if index == 0 && (character == '-' || character == '_' || character == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func validGitHubArtifactName(value string) bool {
+	if value == "" || len(value) > 255 || strings.Contains(value, "..") || strings.ContainsAny(value, "/\\") || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
 			return false
 		}
 	}

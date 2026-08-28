@@ -18,26 +18,30 @@ import (
 	"time"
 
 	"github.com/guijoazeiro/prodmap/internal/config"
+	"github.com/guijoazeiro/prodmap/internal/deployment"
 	prodmapdocker "github.com/guijoazeiro/prodmap/internal/docker"
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	prodmapgit "github.com/guijoazeiro/prodmap/internal/git"
+	prodmapgithub "github.com/guijoazeiro/prodmap/internal/github"
 	"github.com/guijoazeiro/prodmap/internal/inventory"
 	"github.com/guijoazeiro/prodmap/internal/logging"
 )
 
 // App owns the CLI process dependencies and keeps command execution testable.
 type App struct {
-	Stdout         io.Writer
-	Stderr         io.Writer
-	Now            func() time.Time
-	WorkingDir     func() (string, error)
-	Environment    map[string]string
-	UserConfigPath string
-	BuildInfo      BuildInfo
-	LookPath       func(string) (string, error)
-	RunExternal    func(context.Context, string, ...string) error
-	RuntimeSource  func() inventory.RuntimeSource
-	CommitSource   func(string) inventory.CommitSource
+	Stdout                 io.Writer
+	Stderr                 io.Writer
+	Now                    func() time.Time
+	WorkingDir             func() (string, error)
+	Environment            map[string]string
+	UserConfigPath         string
+	BuildInfo              BuildInfo
+	LookPath               func(string) (string, error)
+	RunExternal            func(context.Context, string, ...string) error
+	RuntimeSource          func() inventory.RuntimeSource
+	CommitSource           func(string) inventory.CommitSource
+	GitHubDeploymentSource func(string) (deployment.DeploymentSource, error)
+	GitHubSyncTimeout      time.Duration
 }
 
 // NewApp constructs a CLI using process-backed defaults.
@@ -53,8 +57,10 @@ func NewApp(stdout, stderr io.Writer, buildInfo BuildInfo) *App {
 		RunExternal: func(ctx context.Context, name string, args ...string) error {
 			return exec.CommandContext(ctx, name, args...).Run()
 		},
-		RuntimeSource: func() inventory.RuntimeSource { return prodmapdocker.NewSource() },
-		CommitSource:  func(projectDir string) inventory.CommitSource { return prodmapgit.New(projectDir) },
+		RuntimeSource:          func() inventory.RuntimeSource { return prodmapdocker.NewSource() },
+		CommitSource:           func(projectDir string) inventory.CommitSource { return prodmapgit.New(projectDir) },
+		GitHubDeploymentSource: func(token string) (deployment.DeploymentSource, error) { return prodmapgithub.New(token) },
+		GitHubSyncTimeout:      2 * time.Minute,
 	}
 }
 
@@ -76,6 +82,9 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	if command == "deployments" && len(args) > 1 && args[1] == "ingest" {
 		publicCommand = "deployments ingest"
+	}
+	if command == "deployments" && len(args) > 2 && args[1] == "sync" && args[2] == "github-actions" {
+		publicCommand = "deployments sync github-actions"
 	}
 	jsonRequested := containsJSONFlag(args[1:])
 	var err error

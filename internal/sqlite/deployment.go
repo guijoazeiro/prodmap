@@ -47,15 +47,29 @@ func (s *Store) saveDeployment(ctx context.Context, snapshot deployment.Snapshot
 	defer cleanup()
 	defer tx.Rollback()
 	now := s.clockNow()
-	sourceID, err := ensureSource(ctx, tx, "deployment_ledger", snapshot.SourceKey, "success", snapshot.ObservedAt, now)
+	result, _, err := s.saveDeploymentTx(ctx, tx, snapshot, now, "deployment_ledger", []string{})
 	if err != nil {
 		return deployment.IngestResult{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return deployment.IngestResult{}, fmt.Errorf("%w: commit deployment ingestion: %w", errs.ErrUnavailable, err)
+	}
+	return result, nil
+}
+
+// saveDeploymentTx writes the immutable deployment ledger in the caller's
+// transaction. Remote source observations use this exact path so the ledger
+// and its authenticated source metadata are committed atomically.
+func (s *Store) saveDeploymentTx(ctx context.Context, tx *sql.Tx, snapshot deployment.Snapshot, now time.Time, sourceKind string, warnings []string) (deployment.IngestResult, string, error) {
+	sourceID, err := ensureSource(ctx, tx, sourceKind, snapshot.SourceKey, "success", snapshot.ObservedAt, now)
+	if err != nil {
+		return deployment.IngestResult{}, "", err
+	}
 	if result, found, err := existingDeploymentIngestion(ctx, tx, sourceID, snapshot.SourceHash); err != nil {
-		return deployment.IngestResult{}, err
+		return deployment.IngestResult{}, "", err
 	} else if found {
 		result.IdempotentReplay = true
-		return result, nil
+		return result, sourceID, nil
 	}
 
 	existing := 0
@@ -65,25 +79,25 @@ func (s *Store) saveDeployment(ctx context.Context, snapshot deployment.Snapshot
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 		case err != nil:
-			return deployment.IngestResult{}, fmt.Errorf("%w: inspect deployment identity: %w", errs.ErrUnavailable, err)
+			return deployment.IngestResult{}, "", fmt.Errorf("%w: inspect deployment identity: %w", errs.ErrUnavailable, err)
 		case stored != record.Fingerprint:
-			return deployment.IngestResult{}, fmt.Errorf("%w: deployment identity changed", errs.ErrConflict)
+			return deployment.IngestResult{}, "", fmt.Errorf("%w: deployment identity changed", errs.ErrConflict)
 		default:
 			existing++
 		}
 	}
 	ingestionID, err := identity.NewV7(now)
 	if err != nil {
-		return deployment.IngestResult{}, err
+		return deployment.IngestResult{}, "", err
 	}
 	stamp := formatTime(now)
-	warningsJSON, err := sanitizedJSON([]string{}, 8192)
+	warningsJSON, err := sanitizedJSON(warnings, 8192)
 	if err != nil {
-		return deployment.IngestResult{}, err
+		return deployment.IngestResult{}, "", err
 	}
 	inserted := len(snapshot.Records) - existing
 	if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_ingestions(id,source_id,source_hash,format,records_seen,deployments_inserted,deployments_existing,warnings_json,observed_at,ingested_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, ingestionID, sourceID, snapshot.SourceHash, deployment.Format, len(snapshot.Records), inserted, existing, warningsJSON, formatTime(snapshot.ObservedAt), stamp, stamp); err != nil {
-		return deployment.IngestResult{}, fmt.Errorf("%w: create deployment ingestion: %w", errs.ErrUnavailable, err)
+		return deployment.IngestResult{}, "", fmt.Errorf("%w: create deployment ingestion: %w", errs.ErrUnavailable, err)
 	}
 	for _, record := range snapshot.Records {
 		var known string
@@ -92,57 +106,136 @@ func (s *Store) saveDeployment(ctx context.Context, snapshot deployment.Snapshot
 			continue
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return deployment.IngestResult{}, fmt.Errorf("%w: inspect deployment: %w", errs.ErrUnavailable, err)
+			return deployment.IngestResult{}, "", fmt.Errorf("%w: inspect deployment: %w", errs.ErrUnavailable, err)
 		}
 		resolved, err := resolveDeployment(ctx, tx, record, now)
 		if err != nil {
-			return deployment.IngestResult{}, err
+			return deployment.IngestResult{}, "", err
 		}
 		id, err := identity.NewV7(now)
 		if err != nil {
-			return deployment.IngestResult{}, err
+			return deployment.IngestResult{}, "", err
 		}
 		limitationsJSON, err := sanitizedJSON(resolved.limitations, 8192)
 		if err != nil {
-			return deployment.IngestResult{}, err
+			return deployment.IngestResult{}, "", err
 		}
 		verified := 0
 		if record.VCSRevisionVerified {
 			verified = 1
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,source_id,first_ingestion_id,external_id,environment,service_key,service_id,artifact_id,commit_id,status,strategy,started_at,finished_at,artifact_repo_digest,artifact_image_id,commit_sha,commit_verified,record_fingerprint,provenance_status,confidence_level,confidence_basis,limitations_json,algorithm_version,observed_at,ingested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, sourceID, ingestionID, record.DeploymentID, record.Environment, record.Service, nullable(resolved.serviceID), nullable(resolved.artifactID), nullable(resolved.commitID), record.Status, "unknown", formatTime(record.DeployedAt), nil, nullablePointer(record.RepoDigest), record.ImageID, nullable(resolved.commitSHA), verified, record.Fingerprint, resolved.status, resolved.confidence, resolved.basis, limitationsJSON, deployment.AlgorithmVersion, formatTime(snapshot.ObservedAt), stamp, stamp, stamp); err != nil {
-			return deployment.IngestResult{}, fmt.Errorf("%w: save deployment: %w", errs.ErrUnavailable, err)
+			return deployment.IngestResult{}, "", fmt.Errorf("%w: save deployment: %w", errs.ErrUnavailable, err)
 		}
 		for ordinal, evidence := range resolved.evidence {
 			evidenceID, err := identity.NewV7(now)
 			if err != nil {
-				return deployment.IngestResult{}, err
+				return deployment.IngestResult{}, "", err
 			}
 			details, err := sanitizedJSON(map[string]string{}, 512)
 			if err != nil {
-				return deployment.IngestResult{}, err
+				return deployment.IngestResult{}, "", err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_evidence(id,deployment_id,kind,subject,claim,polarity,source,observed_at,details_json,ordinal,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, evidenceID, id, evidence.Kind, evidence.Subject, evidence.Claim, evidence.Polarity, evidence.Source, formatTime(snapshot.ObservedAt), details, ordinal, stamp); err != nil {
-				return deployment.IngestResult{}, fmt.Errorf("%w: save deployment evidence: %w", errs.ErrUnavailable, err)
+				return deployment.IngestResult{}, "", fmt.Errorf("%w: save deployment evidence: %w", errs.ErrUnavailable, err)
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return deployment.IngestResult{}, fmt.Errorf("%w: commit deployment ingestion: %w", errs.ErrUnavailable, err)
+	return deployment.IngestResult{IngestionID: ingestionID, SourceHash: snapshot.SourceHash, Format: deployment.Format, RecordsSeen: len(snapshot.Records), DeploymentsInserted: inserted, DeploymentsExisting: existing, Warnings: warnings}, sourceID, nil
+}
+
+// SaveDeploymentSource persists a validated remote ledger and its authenticated
+// source observation in one transaction. A failed or contradictory source
+// observation therefore cannot leave a deployment ledger behind.
+func (s *Store) SaveDeploymentSource(ctx context.Context, source deployment.SourceResult) (deployment.SyncResult, error) {
+	if err := deployment.ValidateSourceResult(source); err != nil {
+		return deployment.SyncResult{}, err
 	}
-	return deployment.IngestResult{IngestionID: ingestionID, SourceHash: snapshot.SourceHash, Format: deployment.Format, RecordsSeen: len(snapshot.Records), DeploymentsInserted: inserted, DeploymentsExisting: existing, Warnings: []string{}}, nil
+	var lastErr error
+	for attempt := range 4 {
+		result, err := s.saveDeploymentSource(ctx, source)
+		if err == nil || !isSQLiteBusy(err) {
+			return result, err
+		}
+		lastErr = err
+		timer := time.NewTimer(time.Duration(attempt+1) * 10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return deployment.SyncResult{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return deployment.SyncResult{}, lastErr
+}
+
+func (s *Store) saveDeploymentSource(ctx context.Context, source deployment.SourceResult) (deployment.SyncResult, error) {
+	tx, cleanup, err := s.beginTransaction(ctx)
+	if err != nil {
+		return deployment.SyncResult{}, fmt.Errorf("%w: begin GitHub Actions deployment sync: %w", errs.ErrUnavailable, err)
+	}
+	defer cleanup()
+	defer tx.Rollback()
+
+	now := s.clockNow()
+	ingestion, sourceID, err := s.saveDeploymentTx(ctx, tx, source.Snapshot, now, "github_actions_deployment_ledger", source.Warnings)
+	if err != nil {
+		return deployment.SyncResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sources SET name=? WHERE id=?`, "GitHub Actions deployment ledger", sourceID); err != nil {
+		return deployment.SyncResult{}, fmt.Errorf("%w: name GitHub Actions deployment source: %w", errs.ErrUnavailable, err)
+	}
+
+	observationID, existing, err := saveGitHubActionsDeploymentFetch(ctx, tx, sourceID, ingestion.IngestionID, source, now)
+	if err != nil {
+		return deployment.SyncResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return deployment.SyncResult{}, fmt.Errorf("%w: commit GitHub Actions deployment sync: %w", errs.ErrUnavailable, err)
+	}
+	return deployment.SyncResult{Ingestion: ingestion, SourceObservationID: observationID, SourceExisting: existing}, nil
+}
+
+func saveGitHubActionsDeploymentFetch(ctx context.Context, tx *sql.Tx, sourceID, ingestionID string, source deployment.SourceResult, now time.Time) (string, bool, error) {
+	var stored struct {
+		id, ingestionID, repository, artifactName, artifactDigest, workflowHeadSHA string
+		workflowRunID                                                              int64
+	}
+	err := tx.QueryRowContext(ctx, `SELECT id,ingestion_id,repository,artifact_name,artifact_digest,workflow_run_id,workflow_head_sha FROM github_actions_deployment_fetches WHERE source_id=? AND artifact_id=?`, sourceID, source.ArtifactID).Scan(&stored.id, &stored.ingestionID, &stored.repository, &stored.artifactName, &stored.artifactDigest, &stored.workflowRunID, &stored.workflowHeadSHA)
+	if err == nil {
+		if stored.ingestionID != ingestionID || stored.repository != source.Repository || stored.artifactName != source.ArtifactName || stored.artifactDigest != source.ArtifactDigest || stored.workflowRunID != source.WorkflowRunID || stored.workflowHeadSHA != source.WorkflowHeadSHA {
+			return "", false, fmt.Errorf("%w: GitHub Actions artifact metadata changed", errs.ErrConflict)
+		}
+		return stored.id, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, fmt.Errorf("%w: inspect GitHub Actions deployment fetch: %w", errs.ErrUnavailable, err)
+	}
+	id, err := identity.NewV7(now)
+	if err != nil {
+		return "", false, err
+	}
+	stamp := formatTime(now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO github_actions_deployment_fetches(id,source_id,ingestion_id,repository,artifact_name,artifact_id,artifact_digest,workflow_run_id,workflow_head_sha,artifact_created_at,artifact_updated_at,artifact_expires_at,observed_at,fetched_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, sourceID, ingestionID, source.Repository, source.ArtifactName, source.ArtifactID, source.ArtifactDigest, source.WorkflowRunID, source.WorkflowHeadSHA, formatTime(source.CreatedAt), formatTime(source.UpdatedAt), formatTime(source.ExpiresAt), formatTime(source.Snapshot.ObservedAt), stamp, stamp)
+	if err != nil {
+		return "", false, fmt.Errorf("%w: save GitHub Actions deployment fetch: %w", errs.ErrUnavailable, err)
+	}
+	return id, false, nil
 }
 
 func existingDeploymentIngestion(ctx context.Context, tx *sql.Tx, sourceID, sourceHash string) (deployment.IngestResult, bool, error) {
 	var result deployment.IngestResult
-	err := tx.QueryRowContext(ctx, `SELECT id,source_hash,format,records_seen,deployments_inserted,deployments_existing FROM deployment_ingestions WHERE source_id=? AND source_hash=?`, sourceID, sourceHash).Scan(&result.IngestionID, &result.SourceHash, &result.Format, &result.RecordsSeen, &result.DeploymentsInserted, &result.DeploymentsExisting)
+	var warningsJSON string
+	err := tx.QueryRowContext(ctx, `SELECT id,source_hash,format,records_seen,deployments_inserted,deployments_existing,warnings_json FROM deployment_ingestions WHERE source_id=? AND source_hash=?`, sourceID, sourceHash).Scan(&result.IngestionID, &result.SourceHash, &result.Format, &result.RecordsSeen, &result.DeploymentsInserted, &result.DeploymentsExisting, &warningsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, false, nil
 	}
 	if err != nil {
 		return result, false, fmt.Errorf("%w: find deployment ingestion: %w", errs.ErrUnavailable, err)
 	}
-	result.Warnings = []string{}
+	if err := json.Unmarshal([]byte(warningsJSON), &result.Warnings); err != nil || result.Warnings == nil {
+		return result, false, fmt.Errorf("%w: decode deployment ingestion warnings", errs.ErrUnavailable)
+	}
 	return result, true, nil
 }
 

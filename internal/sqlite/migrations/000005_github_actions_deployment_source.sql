@@ -1,0 +1,27 @@
+CREATE TABLE github_actions_deployment_fetches (
+    id TEXT NOT NULL PRIMARY KEY CHECK (length(id)=36 AND substr(id,9,1)='-' AND substr(id,14,1)='-' AND substr(id,19,1)='-' AND substr(id,24,1)='-' AND replace(id,'-','') NOT GLOB '*[^0-9a-f]*' AND substr(id,15,1)='7' AND substr(id,20,1) GLOB '[89ab]'),
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    ingestion_id TEXT NOT NULL REFERENCES deployment_ingestions(id),
+    repository TEXT NOT NULL CHECK(length(repository) BETWEEN 3 AND 201 AND instr(repository,'/') > 1),
+    artifact_name TEXT NOT NULL CHECK(length(artifact_name) BETWEEN 1 AND 255),
+    artifact_id INTEGER NOT NULL CHECK(artifact_id > 0),
+    artifact_digest TEXT NOT NULL CHECK(artifact_digest GLOB 'sha256:*' AND length(artifact_digest)=71 AND substr(artifact_digest,8) NOT GLOB '*[^0-9a-f]*'),
+    workflow_run_id INTEGER NOT NULL CHECK(workflow_run_id > 0),
+    workflow_head_sha TEXT NOT NULL CHECK((length(workflow_head_sha)=40 OR length(workflow_head_sha)=64) AND workflow_head_sha NOT GLOB '*[^0-9a-f]*'),
+    artifact_created_at TEXT NOT NULL,
+    artifact_updated_at TEXT NOT NULL,
+    artifact_expires_at TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_id, artifact_id),
+    CHECK(artifact_updated_at >= artifact_created_at),
+    CHECK(artifact_expires_at > artifact_created_at),
+    CHECK(length(artifact_created_at)=30 AND artifact_created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%S',artifact_created_at) IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%S',artifact_created_at)=substr(artifact_created_at,1,19) AND substr(artifact_created_at,12,2) BETWEEN '00' AND '23' AND substr(artifact_created_at,15,2) BETWEEN '00' AND '59' AND substr(artifact_created_at,18,2) BETWEEN '00' AND '59'),
+    CHECK(length(artifact_updated_at)=30 AND artifact_updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%S',artifact_updated_at) IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%S',artifact_updated_at)=substr(artifact_updated_at,1,19) AND substr(artifact_updated_at,12,2) BETWEEN '00' AND '23' AND substr(artifact_updated_at,15,2) BETWEEN '00' AND '59' AND substr(artifact_updated_at,18,2) BETWEEN '00' AND '59'),
+    CHECK(length(artifact_expires_at)=30 AND artifact_expires_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%S',artifact_expires_at) IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%S',artifact_expires_at)=substr(artifact_expires_at,1,19) AND substr(artifact_expires_at,12,2) BETWEEN '00' AND '23' AND substr(artifact_expires_at,15,2) BETWEEN '00' AND '59' AND substr(artifact_expires_at,18,2) BETWEEN '00' AND '59'),
+    CHECK(length(observed_at)=30 AND observed_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%S',observed_at) IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%S',observed_at)=substr(observed_at,1,19) AND substr(observed_at,12,2) BETWEEN '00' AND '23' AND substr(observed_at,15,2) BETWEEN '00' AND '59' AND substr(observed_at,18,2) BETWEEN '00' AND '59'),
+    CHECK(length(fetched_at)=30 AND fetched_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%S',fetched_at) IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%S',fetched_at)=substr(fetched_at,1,19) AND substr(fetched_at,12,2) BETWEEN '00' AND '23' AND substr(fetched_at,15,2) BETWEEN '00' AND '59' AND substr(fetched_at,18,2) BETWEEN '00' AND '59'),
+    CHECK(length(created_at)=30 AND created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z' AND strftime('%Y-%m-%dT%H:%M:%S',created_at) IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%S',created_at)=substr(created_at,1,19) AND substr(created_at,12,2) BETWEEN '00' AND '23' AND substr(created_at,15,2) BETWEEN '00' AND '59' AND substr(created_at,18,2) BETWEEN '00' AND '59')
+);
+CREATE INDEX github_actions_deployment_fetches_ingestion_idx ON github_actions_deployment_fetches(ingestion_id);
