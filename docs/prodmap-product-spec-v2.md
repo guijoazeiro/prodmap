@@ -798,10 +798,12 @@ inferida, não causal e não é persistida.
 deployment e observações runtime, preservando concorrência e rollback declarado
 sem afirmar efeito de runtime ou causalidade.
 
-**Slice 3.4A materializada:** fronteira segura e testável para artifact GitHub
-Actions que transporta o contrato `deployment-ledger-jsonl/v1`; não infere
-deployment de workflow run e não inclui CLI, persistência ou smoke real. A
-Phase 3 não está concluída e a Phase 4 continua bloqueada.
+**Slices 3.4A, 3.4B1 e 3.4B2 materializadas:** fronteira segura e testável para
+artifact GitHub Actions que transporta o contrato `deployment-ledger-jsonl/v1`,
+CLI/persistência atômica do ledger e workflow controlado para publicação e sync.
+O [Phase 3 Technical Gate Review](reviews/phase-3-gate-review.md) registra o
+PASS técnico limitado às evidências revisadas; não é `go`, não valida a tese e a
+Phase 4 continua bloqueada até decisão explícita do owner.
 
 Entregas:
 

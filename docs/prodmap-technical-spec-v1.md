@@ -346,6 +346,10 @@ As decisões executáveis estão registradas separadamente para manter o escopo 
 
 Esses ADRs não autorizam deployments, baseline, regression ou qualquer fase além da conclusão limitada da Phase 2 sob `continue-for-learning`; isso não é `go` e exigiu nova revisão da tese ao final da Phase 2. A [Decision 002](decisions/002-phase-3-limited-learning.md) autoriza separadamente e somente a Phase 3 como aprendizado limitado; ela não é `go`, não valida a tese e mantém a Phase 4 bloqueada.
 
+O [Phase 3 Technical Gate Review](reviews/phase-3-gate-review.md) registra a
+avaliação técnica dessa autorização limitada. Ele não substitui a decisão formal
+da Phase -1 nem autoriza a Phase 4.
+
 ---
 
 # Parte II — Schema conceitual do domínio
