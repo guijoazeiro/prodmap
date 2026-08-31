@@ -60,7 +60,7 @@ func TestRegressionCLIProducesAvailableAndFutureUnknownJSON(t *testing.T) {
 	}
 	envelope := decodeEnvelope(t, stdout.Bytes())
 	data := envelope["data"].(map[string]any)
-	if envelope["generated_at"] != generatedAt.Format(time.RFC3339Nano) || data["status"] != "AVAILABLE" || data["classification"] != nil || data["causality_claimed"] != false || data["absolute_delta"] != float64(10) || data["relative_delta"] != float64(.5) {
+	if envelope["generated_at"] != generatedAt.Format(time.RFC3339Nano) || data["status"] != "AVAILABLE" || data["classification"].(map[string]any)["result"] != "UNKNOWN" || data["causality_claimed"] != false || data["absolute_delta"] != float64(10) || data["relative_delta"] != float64(.5) {
 		t.Fatalf("available envelope=%#v", envelope)
 	}
 	if data["before"].(map[string]any)["accepted_windows"] == nil || data["after"].(map[string]any)["rejected_windows"] == nil {

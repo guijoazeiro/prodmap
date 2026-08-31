@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	AlgorithmVersion            = "deployment-comparison/v1-experimental"
-	ObservationAlgorithmVersion = "observation-exact-window/v1-experimental"
-	MaxContaminatingDeployments = 100
+	AlgorithmVersion               = "deployment-comparison/v1-experimental"
+	ObservationAlgorithmVersion    = "observation-exact-window/v1-experimental"
+	MaxContaminatingDeployments    = 100
+	ClassificationAlgorithmVersion = "regression-threshold/v1-experimental"
 )
 
 type Query struct {
@@ -46,8 +47,10 @@ type Input struct {
 }
 
 type Confidence struct {
-	Level, Basis, AlgorithmVersion string
-	Limitations                    []string
+	Level            string   `json:"level"`
+	Basis            string   `json:"basis"`
+	AlgorithmVersion string   `json:"algorithm_version"`
+	Limitations      []string `json:"limitations"`
 }
 
 type Side struct {
@@ -72,8 +75,30 @@ type Result struct {
 	BaselineConfidence                      Confidence
 	ObservationConfidence                   Confidence
 	RegressionConfidence                    Confidence
-	Classification                          *string
+	Classification                          *Classification
 	CausalityClaimed                        bool
+}
+
+type Classification struct {
+	ClassificationKey string     `json:"classification_key"`
+	Result            string     `json:"result"`
+	Direction         string     `json:"direction"`
+	AlgorithmVersion  string     `json:"algorithm_version"`
+	Thresholds        Thresholds `json:"thresholds"`
+	ObservedEffect    Effect     `json:"observed_effect"`
+	Confidence        Confidence `json:"confidence"`
+	CausalityClaimed  bool       `json:"causality_claimed"`
+}
+
+type Thresholds struct {
+	AbsoluteMin *float64 `json:"absolute_min"`
+	RelativeMin *float64 `json:"relative_min"`
+	RequireAll  bool     `json:"require_all"`
+	Unit        string   `json:"unit"`
+}
+type Effect struct {
+	AbsoluteDelta *float64 `json:"absolute_delta"`
+	RelativeDelta *float64 `json:"relative_delta"`
 }
 
 // Reader is owned by the analytical consumer and implemented by local SQLite.

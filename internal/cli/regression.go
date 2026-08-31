@@ -52,15 +52,24 @@ func (a *App) runRegression(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	classification, err := regression.Classify(ctx, result)
+	if err != nil {
+		return err
+	}
+	result.Classification = &classification
 	data := regressionOutputFrom(result)
 	if *common.jsonOutput {
 		return WriteSuccess(a.Stdout, "regression", generatedAt, data, []string{}, nil)
 	}
 	fmt.Fprintf(a.Stdout, "Regression comparison: %s %s\nDeployment: %s\nBaseline confidence: %s\nObservation confidence: %s\nComparison confidence: %s\n", data.Status, data.Metric, data.Deployment.ID, data.BaselineConfidence.Level, data.ObservationConfidence.Level, data.RegressionConfidence.Level)
+	fmt.Fprintf(a.Stdout, "Classification: %s\nClassification confidence: %s\n", data.Classification.Result, data.Classification.Confidence.Level)
 	if data.AbsoluteDelta != nil {
 		fmt.Fprintf(a.Stdout, "Absolute delta: %v %s\n", *data.AbsoluteDelta, data.Unit)
 	}
 	for _, limitation := range data.RegressionConfidence.Limitations {
+		fmt.Fprintf(a.Stderr, "warning: %s\n", limitation)
+	}
+	for _, limitation := range data.Classification.Confidence.Limitations {
 		fmt.Fprintf(a.Stderr, "warning: %s\n", limitation)
 	}
 	return nil
@@ -81,7 +90,7 @@ type regressionOutput struct {
 	BaselineConfidence    regressionConfidenceOutput    `json:"baseline_confidence"`
 	ObservationConfidence regressionConfidenceOutput    `json:"observation_confidence"`
 	RegressionConfidence  regressionConfidenceOutput    `json:"regression_confidence"`
-	Classification        *string                       `json:"classification"`
+	Classification        *regression.Classification    `json:"classification"`
 	CausalityClaimed      bool                          `json:"causality_claimed"`
 }
 
@@ -125,7 +134,7 @@ type regressionConfidenceOutput struct {
 }
 
 func regressionOutputFrom(result regression.Result) regressionOutput {
-	return regressionOutput{ComparisonKey: result.ComparisonKey, Status: result.Status, AlgorithmVersion: result.AlgorithmVersion, Deployment: regressionDeploymentOutput{ID: result.Deployment.ID, ExternalID: result.Deployment.ExternalID, Environment: result.Deployment.Environment, Service: result.Deployment.Service, StartedAt: result.Deployment.StartedAt.UTC().Format(time.RFC3339Nano)}, Metric: result.Metric, Unit: result.Unit, Before: regressionSideOutputFrom(result.Before), After: regressionSideOutputFrom(result.After), AbsoluteDelta: result.AbsoluteDelta, RelativeDelta: result.RelativeDelta, Contamination: regressionContaminationOutput{BeforeDeployments: append([]string{}, result.Contamination.BeforeDeployments...), AfterDeployments: append([]string{}, result.Contamination.AfterDeployments...), ConcurrentDeployments: append([]string{}, result.Contamination.ConcurrentDeployments...), Truncated: result.Contamination.Truncated}, BaselineConfidence: regressionConfidenceOutputFrom(result.BaselineConfidence), ObservationConfidence: regressionConfidenceOutputFrom(result.ObservationConfidence), RegressionConfidence: regressionConfidenceOutputFrom(result.RegressionConfidence), Classification: nil, CausalityClaimed: false}
+	return regressionOutput{ComparisonKey: result.ComparisonKey, Status: result.Status, AlgorithmVersion: result.AlgorithmVersion, Deployment: regressionDeploymentOutput{ID: result.Deployment.ID, ExternalID: result.Deployment.ExternalID, Environment: result.Deployment.Environment, Service: result.Deployment.Service, StartedAt: result.Deployment.StartedAt.UTC().Format(time.RFC3339Nano)}, Metric: result.Metric, Unit: result.Unit, Before: regressionSideOutputFrom(result.Before), After: regressionSideOutputFrom(result.After), AbsoluteDelta: result.AbsoluteDelta, RelativeDelta: result.RelativeDelta, Contamination: regressionContaminationOutput{BeforeDeployments: append([]string{}, result.Contamination.BeforeDeployments...), AfterDeployments: append([]string{}, result.Contamination.AfterDeployments...), ConcurrentDeployments: append([]string{}, result.Contamination.ConcurrentDeployments...), Truncated: result.Contamination.Truncated}, BaselineConfidence: regressionConfidenceOutputFrom(result.BaselineConfidence), ObservationConfidence: regressionConfidenceOutputFrom(result.ObservationConfidence), RegressionConfidence: regressionConfidenceOutputFrom(result.RegressionConfidence), Classification: result.Classification, CausalityClaimed: false}
 }
 
 func regressionSideOutputFrom(side regression.Side) regressionSideOutput {
