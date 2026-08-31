@@ -16,8 +16,11 @@ func Classify(ctx context.Context, comparison Result) (Classification, error) {
 	if err := ctx.Err(); err != nil {
 		return Classification{}, err
 	}
-	if comparison.AlgorithmVersion != AlgorithmVersion || !validKey(comparison.ComparisonKey) || comparison.CausalityClaimed || !validMetricUnit(comparison.Metric, comparison.Unit) {
-		return Classification{}, fmt.Errorf("%w: incompatible comparison", errs.ErrIncompatible)
+	if err := validateComparison(comparison); err != nil {
+		return Classification{}, err
+	}
+	if (comparison.AbsoluteDelta != nil && !finite(comparison.AbsoluteDelta)) || (comparison.RelativeDelta != nil && !finite(comparison.RelativeDelta)) {
+		return Classification{}, fmt.Errorf("%w: non-finite comparison delta", errs.ErrIncompatible)
 	}
 	c := Classification{Result: "UNKNOWN", Direction: direction(comparison.AbsoluteDelta), AlgorithmVersion: ClassificationAlgorithmVersion, ObservedEffect: Effect{comparison.AbsoluteDelta, comparison.RelativeDelta}, CausalityClaimed: false}
 	c.Thresholds = thresholds(comparison.Metric)
@@ -37,7 +40,8 @@ func Classify(ctx context.Context, comparison Result) (Classification, error) {
 	}
 	candidate := false
 	if comparison.Metric == baseline.ErrorRate {
-		candidate = *comparison.AbsoluteDelta >= .05
+		// Two ULPs compensate binary subtraction of rates; they do not change the contractual threshold.
+		candidate = *comparison.AbsoluteDelta >= twoULPsBelow(.05)
 	} else {
 		candidate = *comparison.AbsoluteDelta >= 50_000_000 && *comparison.RelativeDelta >= .20
 	}
@@ -50,6 +54,38 @@ func Classify(ctx context.Context, comparison Result) (Classification, error) {
 	}
 	c.ClassificationKey = classificationKey(comparison, c)
 	return c, nil
+}
+func twoULPsBelow(value float64) float64 { return math.Nextafter(math.Nextafter(value, 0), 0) }
+func validateComparison(r Result) error {
+	if r.AlgorithmVersion != AlgorithmVersion || !validKey(r.ComparisonKey) || r.CausalityClaimed || r.Classification != nil || !validMetricUnit(r.Metric, r.Unit) || (r.Status != "AVAILABLE" && r.Status != "UNKNOWN") {
+		return fmt.Errorf("%w: incompatible comparison", errs.ErrIncompatible)
+	}
+	for _, c := range []Confidence{r.BaselineConfidence, r.ObservationConfidence, r.RegressionConfidence} {
+		if (c.Level != "LOW" && c.Level != "UNKNOWN") || c.AlgorithmVersion == "" {
+			return fmt.Errorf("%w: incompatible confidence", errs.ErrIncompatible)
+		}
+	}
+	if r.BaselineConfidence.AlgorithmVersion != baseline.AlgorithmVersion || r.ObservationConfidence.AlgorithmVersion != ObservationAlgorithmVersion || r.RegressionConfidence.AlgorithmVersion != AlgorithmVersion {
+		return fmt.Errorf("%w: incompatible confidence algorithm", errs.ErrIncompatible)
+	}
+	for _, s := range []Side{r.Before, r.After} {
+		if s.Status != "AVAILABLE" && s.Status != "UNKNOWN" {
+			return fmt.Errorf("%w: incompatible side", errs.ErrIncompatible)
+		}
+	}
+	for _, xs := range [][]string{r.Contamination.BeforeDeployments, r.Contamination.AfterDeployments, r.Contamination.ConcurrentDeployments} {
+		for _, id := range xs {
+			if id == "" {
+				return fmt.Errorf("%w: empty contamination id", errs.ErrIncompatible)
+			}
+		}
+	}
+	if r.Status == "AVAILABLE" {
+		if r.Before.Status != "AVAILABLE" || r.After.Status != "AVAILABLE" || !finite(r.Before.Value) || !finite(r.After.Value) || !finite(r.AbsoluteDelta) || (r.Metric != baseline.ErrorRate && r.Metric != baseline.RequestCount && *r.Before.Value != 0 && !finite(r.RelativeDelta)) || r.Contamination.Truncated || len(r.Contamination.BeforeDeployments) > 0 || len(r.Contamination.AfterDeployments) > 0 || len(r.Contamination.ConcurrentDeployments) > 0 {
+			return fmt.Errorf("%w: structurally invalid available comparison", errs.ErrIncompatible)
+		}
+	}
+	return nil
 }
 func thresholds(m baseline.Metric) Thresholds {
 	if m == baseline.ErrorRate {
