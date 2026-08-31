@@ -833,8 +833,15 @@ persiste baseline, não detecta regressão e não produz causalidade, `HIGH` ou
 
 **Slice 4.2 implementada:** `prodmap regression --deployment` compara duas
 janelas exatas de serviço ao redor de um deployment e expõe confidences
-separadas. Ela não cria `CANDIDATE`, não classifica regressão e não estabelece
-causalidade. Slice 4.3 continua não implementada; a Phase 5 permanece bloqueada.
+separadas. Ela não estabelece causalidade.
+
+**Slice 4.3 implementada:** o classificador conservador
+`regression-threshold/v1-experimental` transforma uma comparação elegível em
+`UNKNOWN`, `NO_SIGNAL` ou `CANDIDATE`, sem confirmar regressão, validar
+causalidade ou a tese. As Slices 4.1 (baseline anterior exata), 4.2
+(comparação centrada em deployment) e 4.3 são aprendizado limitado; a próxima
+slice ou gate não é automaticamente autorizada além da autorização limitada já
+registrada. A Phase 5 permanece bloqueada.
 
 Entregas:
 

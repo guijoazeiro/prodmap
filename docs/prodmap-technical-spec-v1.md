@@ -991,13 +991,27 @@ Entrada:
 
 Validação:
 
-- Slice 4.2 aceita somente seleção por deployment;
+- Slice 4.2/4.3 aceita somente seleção por deployment;
 - before e after devem estar entre 5m e 24h;
 - para `request_count`, before e after devem ter a mesma duração, pois a unidade
   é `requests` e esta slice não calcula request rate;
 - usa somente `[D-before,D)` e `[D,D+after)` exatos para service-level windows;
 - dados futuros, janelas ambíguas, insuficientes ou contaminadas retornam `UNKNOWN`;
-- não há threshold, score ou classificação nesta slice.
+- `regression-threshold/v1-experimental` classifica sob demanda uma comparação
+  válida como `UNKNOWN`, `NO_SIGNAL` ou `CANDIDATE`, com direção `INCREASE`,
+  `DECREASE`, `UNCHANGED` ou `UNKNOWN`;
+- latência `p50`, `p95` e `p99` requerem inclusivamente `absolute_delta >=
+  50000000` ns e `relative_delta >= 0.20`; error rate requer inclusivamente
+  `absolute_delta >= 0.05`, permite baseline zero e não requer delta relativo;
+- `request_count` permanece não classificável e retorna classificação `UNKNOWN`;
+- comparação e classificação têm confidences distintas; ambas são somente `LOW`
+  ou `UNKNOWN`, sem causalidade, `HIGH` ou `EXACT`;
+- comparação insuficiente resulta em classificação `UNKNOWN`; entrada
+  estruturalmente incompatível é rejeitada;
+- `classification_key` identifica o algoritmo, versão, thresholds, efeito,
+  confidence e `comparison_key`; `generated_at` não participa das chaves;
+- não há score, pesos, persistência de comparação/classificação ou migration
+  adicional nesta slice.
 
 Saída:
 
@@ -1019,13 +1033,26 @@ Saída:
     "baseline_confidence": {"level": "LOW|UNKNOWN"},
     "observation_confidence": {"level": "LOW|UNKNOWN"},
     "regression_confidence": {"level": "LOW|UNKNOWN"},
-    "classification": null,
+    "classification": {
+      "classification_key": "sha256:...",
+      "result": "UNKNOWN|NO_SIGNAL|CANDIDATE",
+      "direction": "INCREASE|DECREASE|UNCHANGED|UNKNOWN",
+      "algorithm": "regression-threshold",
+      "algorithm_version": "regression-threshold/v1-experimental",
+      "thresholds": {"absolute_min": 50000000, "relative_min": 0.20, "require_all": true, "unit": "nanoseconds"},
+      "observed_effect": {"absolute_delta": 759000000, "relative_delta": 4.1703},
+      "confidence": {"level": "LOW|UNKNOWN", "basis": "...", "algorithm_version": "regression-threshold/v1-experimental", "limitations": []},
+      "causality_claimed": false
+    },
     "causality_claimed": false
   },
   "warnings": [],
   "pagination": null
 }
 ```
+
+Os cinco envelopes completos e os casos `CANDIDATE`, `NO_SIGNAL` e `UNKNOWN`
+estão em [`phase-4-slice-4.3-json-examples.md`](phase-4-slice-4.3-json-examples.md).
 
 ## 14. `prodmap explain`
 

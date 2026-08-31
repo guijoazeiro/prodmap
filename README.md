@@ -153,12 +153,16 @@ causality. Phase 5 remains blocked.
 
 Slice 4.2 adds `prodmap regression --deployment <UUID>` as a read-only exact
 before/after comparison. It returns mechanical deltas and separate baseline,
-observation, and comparison confidence; it does not classify a regression or
-claim causality. Slice 4.3 is not implemented.
+observation, and comparison confidence. Slice 4.3 adds the separate,
+conservative `regression-threshold/v1-experimental` classification:
+`UNKNOWN` for insufficient evidence, `NO_SIGNAL` when experimental thresholds
+are not met, and `CANDIDATE` when they are met. `CANDIDATE` is not a confirmed
+regression, `NO_SIGNAL` does not prove healthy behavior, and no result claims
+causality. Phase 5 remains blocked.
 
-Metrics/logs ingestion, a live receiver in Prodmap, regression classification,
-generic export, MCP, and causal scoring remain out of scope. Experiment 001 has
-not been executed by this implementation.
+Metrics/logs ingestion, a live receiver in Prodmap, generic export, MCP, causal
+scoring, and confirmation of a regression remain out of scope. Experiment 001
+has not been executed by this implementation.
 
 ## Specifications
 
