@@ -151,6 +151,11 @@ for one eligible `[at-window,at)` telemetry window and otherwise reports
 `UNKNOWN`; it does not persist a baseline, detect regression, or claim
 causality. Phase 5 remains blocked.
 
+Slice 4.2 adds `prodmap regression --deployment <UUID>` as a read-only exact
+before/after comparison. It returns mechanical deltas and separate baseline,
+observation, and comparison confidence; it does not classify a regression or
+claim causality. Slice 4.3 is not implemented.
+
 Metrics/logs ingestion, a live receiver in Prodmap, regression classification,
 generic export, MCP, and causal scoring remain out of scope. Experiment 001 has
 not been executed by this implementation.

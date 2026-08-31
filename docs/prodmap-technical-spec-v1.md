@@ -981,20 +981,23 @@ nenhum resultado é persistido e `HIGH`/`EXACT` não são permitidos.
 Entrada:
 
 ```text
---deployment ID XOR (--service e --at)
+--deployment UUID required
 --before duration default 30m
 --after duration default 30m
---metric repeatable
---min-effect optional
---include-low-confidence false
+--metric required
+--min-samples integer default 10
+--min-coverage float default 0.8
 ```
 
 Validação:
 
-- exatamente um modo de seleção;
-- deployment precisa ter `started_at`;
-- janelas não podem incluir futuro além de tolerância configurada;
-- source stale acima do limite reduz data confidence.
+- Slice 4.2 aceita somente seleção por deployment;
+- before e after devem estar entre 5m e 24h;
+- para `request_count`, before e after devem ter a mesma duração, pois a unidade
+  é `requests` e esta slice não calcula request rate;
+- usa somente `[D-before,D)` e `[D,D+after)` exatos para service-level windows;
+- dados futuros, janelas ambíguas, insuficientes ou contaminadas retornam `UNKNOWN`;
+- não há threshold, score ou classificação nesta slice.
 
 Saída:
 
@@ -1003,29 +1006,23 @@ Saída:
   "schema_version": "1.0",
   "command": "regression",
   "data": {
-    "result": "candidate",
-    "candidate_id": "019...",
-    "service": "checkout-api",
-    "deployment_id": "019...",
-    "started_at": "2026-08-18T14:24:00Z",
-    "changes": [{
-      "metric": "latency_p95",
-      "baseline": 182000000,
-      "observed": 941000000,
-      "relative_delta": 4.1703,
-      "unit": "ns"
-    }],
-    "confidence": {
-      "data": 0.93,
-      "baseline": 0.74,
-      "change": 0.97,
-      "correlation": 0.89,
-      "overall_level": "high"
-    },
-    "evidence_ids": ["019..."],
+    "comparison_key": "sha256:...",
+    "status": "AVAILABLE|UNKNOWN",
+    "deployment": {"id": "019...", "environment": "reference", "service": "checkout-api", "started_at": "2026-08-18T14:24:00Z"},
+    "metric": "latency_p95",
+    "unit": "nanoseconds",
+    "before": {"status": "AVAILABLE|UNKNOWN", "accepted_windows": [], "rejected_windows": []},
+    "after": {"status": "AVAILABLE|UNKNOWN", "accepted_windows": [], "rejected_windows": []},
+    "absolute_delta": 759000000,
+    "relative_delta": 4.1703,
+    "contamination": {"before_deployments": [], "after_deployments": [], "concurrent_deployments": [], "truncated": false},
+    "baseline_confidence": {"level": "LOW|UNKNOWN"},
+    "observation_confidence": {"level": "LOW|UNKNOWN"},
+    "regression_confidence": {"level": "LOW|UNKNOWN"},
+    "classification": null,
     "causality_claimed": false
   },
-  "warnings": ["Historical baseline contains only 3 equivalent windows"],
+  "warnings": [],
   "pagination": null
 }
 ```

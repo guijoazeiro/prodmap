@@ -831,6 +831,11 @@ persiste baseline, não detecta regressão e não produz causalidade, `HIGH` ou
 `EXACT`; insuficiência, ambiguidade, contaminação e dados futuros resultam em
 `UNKNOWN`.
 
+**Slice 4.2 implementada:** `prodmap regression --deployment` compara duas
+janelas exatas de serviço ao redor de um deployment e expõe confidences
+separadas. Ela não cria `CANDIDATE`, não classifica regressão e não estabelece
+causalidade. Slice 4.3 continua não implementada; a Phase 5 permanece bloqueada.
+
 Entregas:
 
 - baselines com confiança própria;
