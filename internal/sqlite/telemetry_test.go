@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
@@ -134,6 +135,57 @@ func TestTelemetrySaveIsIdempotentAndConflictsOnDifferentHash(t *testing.T) {
 	conflict.SourceHash = "sha256:" + strings.Repeat("b", 64)
 	if _, err := store.SaveTelemetry(context.Background(), conflict); !errors.Is(err, errs.ErrConflict) {
 		t.Fatalf("different hash error = %v, want conflict", err)
+	}
+}
+
+func TestTelemetrySaveKeepsServiceAndEndpointWindowsOnReplay(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "service-endpoint-windows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	snapshot := telemetrySnapshot(time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC), "a")
+	serviceWindow := snapshot.Windows[0]
+	serviceWindow.Key = "checkout\x00"
+	serviceWindow.EndpointKey = ""
+	snapshot.Windows = append(snapshot.Windows, serviceWindow)
+	snapshot.Stats.TelemetryWindows = len(snapshot.Windows)
+
+	first, err := store.SaveTelemetry(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIDs := telemetryEntityIDs(t, store)
+	second, err := store.SaveTelemetry(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.IdempotentReplay || first.IngestionID != second.IngestionID {
+		t.Fatalf("first=%+v second=%+v", first, second)
+	}
+	if secondIDs := telemetryEntityIDs(t, store); !reflect.DeepEqual(firstIDs, secondIDs) {
+		t.Fatalf("replay changed IDs:\nfirst=%v\nsecond=%v", firstIDs, secondIDs)
+	}
+
+	rows, err := store.db.Query(`SELECT endpoint_id FROM telemetry_windows ORDER BY endpoint_id IS NOT NULL, endpoint_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var endpointIDs []sql.NullString
+	for rows.Next() {
+		var endpointID sql.NullString
+		if err := rows.Scan(&endpointID); err != nil {
+			t.Fatal(err)
+		}
+		endpointIDs = append(endpointIDs, endpointID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(endpointIDs) != 2 || endpointIDs[0].Valid || !endpointIDs[1].Valid {
+		t.Fatalf("endpoint IDs=%+v", endpointIDs)
 	}
 }
 

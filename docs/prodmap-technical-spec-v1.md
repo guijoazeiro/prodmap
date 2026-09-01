@@ -351,6 +351,8 @@ avaliação técnica dessa autorização limitada. Ele não substitui a decisão
 da Phase -1 nem autorizava a Phase 4 naquele instante. A
 [Decision 003](decisions/003-phase-4-limited-learning.md) autoriza depois a
 Phase 4 apenas como aprendizado limitado, mantendo a Phase 5 bloqueada.
+O [Phase 4 Gate Review](reviews/phase-4-gate-review.md) registra o PASS técnico
+com limitações e preserva o bloqueio da Phase 5.
 
 ---
 
@@ -660,7 +662,9 @@ updated_at      timestamp
 
 ### 3.13 Baseline
 
-**Disponibilidade prevista:** Phase 4. Permanece conceitual antes disso.
+**Disponibilidade prevista:** Phase 4. A Slice 4.1 implementa somente a consulta
+efêmera `previous_window` para service ou endpoint; ela não cria esta entidade
+nem persiste baselines, comparações ou regressões.
 
 ```text
 id                 UUIDv7 PK
@@ -959,38 +963,57 @@ Entrada:
 --service ou --endpoint exatamente um
 --metric required
 --window duration default 30m
---at timestamp default now
---method previous|historical|combined default combined
---history-windows integer default 7
+--at RFC3339 required
+--min-samples integer default 10
+--min-coverage float default 0.8
 ```
 
 Validação:
 
-- janela entre 5m e 24h;
-- mínimo de amostras e cobertura vêm da configuração;
-- histórico insuficiente não é preenchido artificialmente.
+- Slice 4.1 aceita somente `previous_window`, sem flag de método ou histórico;
+- a janela é exatamente `[at-window, at)` e deve existir uma única vez;
+- janela entre 5m e 24h; `min-samples` entre 1 e 1.000.000; cobertura entre 0 e 1;
+- histórico insuficiente, múltiplas janelas, contaminação por deployment e dados futuros retornam `UNKNOWN`.
 
-Saída: valor, dispersão, janelas usadas/rejeitadas, cobertura, confidence e justificativas.
+Saída: valor, janela usada/rejeitada, cobertura, confidence e justificativas;
+nenhum resultado é persistido e `HIGH`/`EXACT` não são permitidos.
 
 ## 13. `prodmap regression`
 
 Entrada:
 
 ```text
---deployment ID XOR (--service e --at)
+--deployment UUID required
 --before duration default 30m
 --after duration default 30m
---metric repeatable
---min-effect optional
---include-low-confidence false
+--metric required
+--min-samples integer default 10
+--min-coverage float default 0.8
 ```
 
 Validação:
 
-- exatamente um modo de seleção;
-- deployment precisa ter `started_at`;
-- janelas não podem incluir futuro além de tolerância configurada;
-- source stale acima do limite reduz data confidence.
+- Slice 4.2/4.3 aceita somente seleção por deployment;
+- before e after devem estar entre 5m e 24h;
+- para `request_count`, before e after devem ter a mesma duração, pois a unidade
+  é `requests` e esta slice não calcula request rate;
+- usa somente `[D-before,D)` e `[D,D+after)` exatos para service-level windows;
+- dados futuros, janelas ambíguas, insuficientes ou contaminadas retornam `UNKNOWN`;
+- `regression-threshold/v1-experimental` classifica sob demanda uma comparação
+  válida como `UNKNOWN`, `NO_SIGNAL` ou `CANDIDATE`, com direção `INCREASE`,
+  `DECREASE`, `UNCHANGED` ou `UNKNOWN`;
+- latência `p50`, `p95` e `p99` requerem inclusivamente `absolute_delta >=
+  50000000` ns e `relative_delta >= 0.20`; error rate requer inclusivamente
+  `absolute_delta >= 0.05`, permite baseline zero e não requer delta relativo;
+- `request_count` permanece não classificável e retorna classificação `UNKNOWN`;
+- comparação e classificação têm confidences distintas; ambas são somente `LOW`
+  ou `UNKNOWN`, sem causalidade, `HIGH` ou `EXACT`;
+- comparação insuficiente resulta em classificação `UNKNOWN`; entrada
+  estruturalmente incompatível é rejeitada;
+- `classification_key` identifica o algoritmo, versão, thresholds, efeito,
+  confidence e `comparison_key`; `generated_at` não participa das chaves;
+- não há score, pesos, persistência de comparação/classificação ou migration
+  adicional nesta slice.
 
 Saída:
 
@@ -999,32 +1022,39 @@ Saída:
   "schema_version": "1.0",
   "command": "regression",
   "data": {
-    "result": "candidate",
-    "candidate_id": "019...",
-    "service": "checkout-api",
-    "deployment_id": "019...",
-    "started_at": "2026-08-18T14:24:00Z",
-    "changes": [{
-      "metric": "latency_p95",
-      "baseline": 182000000,
-      "observed": 941000000,
-      "relative_delta": 4.1703,
-      "unit": "ns"
-    }],
-    "confidence": {
-      "data": 0.93,
-      "baseline": 0.74,
-      "change": 0.97,
-      "correlation": 0.89,
-      "overall_level": "high"
+    "comparison_key": "sha256:...",
+    "status": "AVAILABLE|UNKNOWN",
+    "deployment": {"id": "019...", "environment": "reference", "service": "checkout-api", "started_at": "2026-08-18T14:24:00Z"},
+    "metric": "latency_p95",
+    "unit": "nanoseconds",
+    "before": {"status": "AVAILABLE|UNKNOWN", "accepted_windows": [], "rejected_windows": []},
+    "after": {"status": "AVAILABLE|UNKNOWN", "accepted_windows": [], "rejected_windows": []},
+    "absolute_delta": 759000000,
+    "relative_delta": 4.1703,
+    "contamination": {"before_deployments": [], "after_deployments": [], "concurrent_deployments": [], "truncated": false},
+    "baseline_confidence": {"level": "LOW|UNKNOWN"},
+    "observation_confidence": {"level": "LOW|UNKNOWN"},
+    "regression_confidence": {"level": "LOW|UNKNOWN"},
+    "classification": {
+      "classification_key": "sha256:...",
+      "result": "UNKNOWN|NO_SIGNAL|CANDIDATE",
+      "direction": "INCREASE|DECREASE|UNCHANGED|UNKNOWN",
+      "algorithm": "regression-threshold",
+      "algorithm_version": "regression-threshold/v1-experimental",
+      "thresholds": {"absolute_min": 50000000, "relative_min": 0.20, "require_all": true, "unit": "nanoseconds"},
+      "observed_effect": {"absolute_delta": 759000000, "relative_delta": 4.1703},
+      "confidence": {"level": "LOW|UNKNOWN", "basis": "...", "algorithm_version": "regression-threshold/v1-experimental", "limitations": []},
+      "causality_claimed": false
     },
-    "evidence_ids": ["019..."],
     "causality_claimed": false
   },
-  "warnings": ["Historical baseline contains only 3 equivalent windows"],
+  "warnings": [],
   "pagination": null
 }
 ```
+
+Os cinco envelopes completos e os casos `CANDIDATE`, `NO_SIGNAL` e `UNKNOWN`
+estão em [`phase-4-slice-4.3-json-examples.md`](phase-4-slice-4.3-json-examples.md).
 
 ## 14. `prodmap explain`
 
