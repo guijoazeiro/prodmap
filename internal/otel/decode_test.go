@@ -627,6 +627,79 @@ func TestDecodeDatabaseMissingEndpointMissingServiceAndUnknownTarget(t *testing.
 	}
 }
 
+func TestAggregateServerWindowsRollUpServicesAndEndpointsDeterministically(t *testing.T) {
+	start := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	server := func(key string, duration int64, failed bool) decodedSpan {
+		return decodedSpan{
+			serviceKey: "payment", serviceDisplay: "payment", kind: tracepb.Span_SPAN_KIND_SERVER,
+			duration: duration, isError: failed, endpointKey: key,
+		}
+	}
+	firstEndpoint := "payment\x00http\x00GET /payments/{id}"
+	secondEndpoint := "payment\x00http\x00POST /payments"
+	build := func(spans []decodedSpan) telemetry.Snapshot {
+		t.Helper()
+		snapshot := telemetry.Snapshot{WindowStart: start, WindowEnd: start.Add(time.Minute), ObservedAt: start.Add(time.Minute)}
+		if err := aggregate(&snapshot, spans); err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	windowByKey := func(t *testing.T, snapshot telemetry.Snapshot, key string) telemetry.Window {
+		t.Helper()
+		for _, window := range snapshot.Windows {
+			if window.Key == key {
+				return window
+			}
+		}
+		t.Fatalf("window %q not found in %+v", key, snapshot.Windows)
+		return telemetry.Window{}
+	}
+
+	t.Run("one endpoint materializes service and endpoint windows", func(t *testing.T) {
+		snapshot := build([]decodedSpan{server(firstEndpoint, 10, true)})
+		if snapshot.Stats.TelemetryWindows != 2 || len(snapshot.Windows) != 2 {
+			t.Fatalf("windows=%+v stats=%+v", snapshot.Windows, snapshot.Stats)
+		}
+		serviceWindow := windowByKey(t, snapshot, "payment\x00")
+		endpointWindow := windowByKey(t, snapshot, firstEndpoint)
+		if serviceWindow.EndpointKey != "" || endpointWindow.EndpointKey != firstEndpoint || serviceWindow.RequestCount != 1 || endpointWindow.RequestCount != 1 || serviceWindow.ErrorCount != 1 || endpointWindow.ErrorCount != 1 {
+			t.Fatalf("service=%+v endpoint=%+v", serviceWindow, endpointWindow)
+		}
+	})
+
+	t.Run("multiple endpoints use raw spans for service percentiles", func(t *testing.T) {
+		snapshot := build([]decodedSpan{
+			server(firstEndpoint, 10, false),
+			server(secondEndpoint, 20, true),
+			server(firstEndpoint, 30, false),
+		})
+		serviceWindow := windowByKey(t, snapshot, "payment\x00")
+		if snapshot.Stats.TelemetryWindows != 3 || serviceWindow.RequestCount != 3 || serviceWindow.ErrorCount != 1 || serviceWindow.DurationSumNS != 60 || serviceWindow.P50NS != 20 || serviceWindow.P95NS != 30 || serviceWindow.P99NS != 30 {
+			t.Fatalf("service window=%+v stats=%+v", serviceWindow, snapshot.Stats)
+		}
+	})
+
+	t.Run("no endpoint materializes service only without duplication", func(t *testing.T) {
+		snapshot := build([]decodedSpan{server("", 10, false)})
+		if snapshot.Stats.TelemetryWindows != 1 || len(snapshot.Windows) != 1 {
+			t.Fatalf("windows=%+v stats=%+v", snapshot.Windows, snapshot.Stats)
+		}
+		serviceWindow := windowByKey(t, snapshot, "payment\x00")
+		if serviceWindow.RequestCount != 1 || serviceWindow.EndpointKey != "" {
+			t.Fatalf("service window=%+v", serviceWindow)
+		}
+	})
+
+	t.Run("input order is stable", func(t *testing.T) {
+		forward := build([]decodedSpan{server(firstEndpoint, 10, false), server(secondEndpoint, 20, true)})
+		reverse := build([]decodedSpan{server(secondEndpoint, 20, true), server(firstEndpoint, 10, false)})
+		if !reflect.DeepEqual(forward, reverse) {
+			t.Fatalf("order changed snapshot:\nforward=%+v\nreverse=%+v", forward, reverse)
+		}
+	})
+}
+
 func TestAggregateFailsExplicitlyAtServiceCardinalityLimit(t *testing.T) {
 	spans := make([]decodedSpan, telemetry.MaxServices+1)
 	for index := range spans {

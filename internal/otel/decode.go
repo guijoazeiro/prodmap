@@ -699,9 +699,11 @@ func aggregateContext(ctx context.Context, result *telemetry.Snapshot, spans []d
 		if span.kind != tracepb.Span_SPAN_KIND_SERVER {
 			continue
 		}
-		windowKey := span.serviceKey + "\x00"
+		serviceWindowKey := span.serviceKey + "\x00"
+		if err := addDuration(windowAgg, serviceWindowKey, span.duration, span.isError); err != nil {
+			return err
+		}
 		if span.endpointKey != "" {
-			windowKey = span.endpointKey
 			parts := strings.Split(span.endpointKey, "\x00")
 			endpoint := telemetry.Endpoint{Key: span.endpointKey, ServiceKey: span.serviceKey, Protocol: parts[1], Operation: parts[2]}
 			if parts[1] == "http" {
@@ -710,8 +712,9 @@ func aggregateContext(ctx context.Context, result *telemetry.Snapshot, spans []d
 			endpoints[span.endpointKey] = endpoint
 		} else {
 			endpointMissing++
+			continue
 		}
-		if err := addDuration(windowAgg, windowKey, span.duration, span.isError); err != nil {
+		if err := addDuration(windowAgg, span.endpointKey, span.duration, span.isError); err != nil {
 			return err
 		}
 	}
