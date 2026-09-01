@@ -825,6 +825,10 @@ Entregas:
 [Decision 003](decisions/003-phase-4-limited-learning.md). Esta autorização não
 é `go`, não valida a tese e não autoriza a Phase 5.
 
+O [Phase 4 Gate Review](reviews/phase-4-gate-review.md) registra o PASS técnico
+limitado, sem estabelecer precisão, calibração ou a tese; a Phase 5 permanece
+bloqueada.
+
 **Slice 4.1 implementada:** `prodmap baseline` oferece somente
 uma referência de telemetria anterior exata e consultada sob demanda. Ela não
 persiste baseline, não detecta regressão e não produz causalidade, `HIGH` ou

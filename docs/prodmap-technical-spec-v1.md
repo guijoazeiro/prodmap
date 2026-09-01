@@ -351,6 +351,8 @@ avaliação técnica dessa autorização limitada. Ele não substitui a decisão
 da Phase -1 nem autorizava a Phase 4 naquele instante. A
 [Decision 003](decisions/003-phase-4-limited-learning.md) autoriza depois a
 Phase 4 apenas como aprendizado limitado, mantendo a Phase 5 bloqueada.
+O [Phase 4 Gate Review](reviews/phase-4-gate-review.md) registra o PASS técnico
+com limitações e preserva o bloqueio da Phase 5.
 
 ---
 
