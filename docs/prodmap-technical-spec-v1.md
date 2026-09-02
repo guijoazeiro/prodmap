@@ -350,9 +350,15 @@ O [Phase 3 Technical Gate Review](reviews/phase-3-gate-review.md) registra a
 avaliação técnica dessa autorização limitada. Ele não substitui a decisão formal
 da Phase -1 nem autorizava a Phase 4 naquele instante. A
 [Decision 003](decisions/003-phase-4-limited-learning.md) autoriza depois a
-Phase 4 apenas como aprendizado limitado, mantendo a Phase 5 bloqueada.
+Phase 4 apenas como aprendizado limitado, mantendo a Phase 5 bloqueada naquele
+instante.
 O [Phase 4 Gate Review](reviews/phase-4-gate-review.md) registra o PASS técnico
-com limitações e preserva o bloqueio da Phase 5.
+com limitações e preserva o bloqueio histórico da Phase 5 naquele gate.
+A [Decision 004](decisions/004-agent-ready-side-project.md) autoriza depois as
+Phases 5 e 6 como evolução técnica limitada: a Slice 5.1 de composição somente
+leitura está implementada, enquanto o pacote reproduzível e o MCP mínimo
+somente leitura estão autorizados, mas pendentes de suas próprias slices. Isso
+não constitui validação comercial nem decisão formal `go`, `pivot` ou `stop`.
 
 ---
 

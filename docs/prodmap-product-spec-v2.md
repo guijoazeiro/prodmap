@@ -823,11 +823,11 @@ Entregas:
 
 **Status atual:** **AUTHORIZED FOR LIMITED LEARNING** pela
 [Decision 003](decisions/003-phase-4-limited-learning.md). Esta autorização não
-é `go`, não valida a tese e não autoriza a Phase 5.
+é `go`, não valida a tese e não autorizava a Phase 5 naquele instante.
 
 O [Phase 4 Gate Review](reviews/phase-4-gate-review.md) registra o PASS técnico
-limitado, sem estabelecer precisão, calibração ou a tese; a Phase 5 permanece
-bloqueada.
+limitado, sem estabelecer precisão, calibração ou a tese; naquele gate, a
+Phase 5 permanecia bloqueada.
 
 **Slice 4.1 implementada:** `prodmap baseline` oferece somente
 uma referência de telemetria anterior exata e consultada sob demanda. Ela não
@@ -845,7 +845,7 @@ separadas. Ela não estabelece causalidade.
 causalidade ou a tese. As Slices 4.1 (baseline anterior exata), 4.2
 (comparação centrada em deployment) e 4.3 são aprendizado limitado; a próxima
 slice ou gate não é automaticamente autorizada além da autorização limitada já
-registrada. A Phase 5 permanece bloqueada.
+registrada. Naquele gate, a Phase 5 permanecia bloqueada.
 
 Entregas:
 
@@ -862,6 +862,12 @@ Entregas:
 
 **Objetivo:** tornar análises portáteis e reproduzíveis.
 
+**Status atual:** as Phases 5 e 6 estão autorizadas como evolução técnica
+limitada do side project pela [Decision 004](decisions/004-agent-ready-side-project.md).
+A Slice 5.1 está implementada; o pacote reproduzível continua pendente de sua
+própria slice. Isso não é validação comercial nem decisão formal `go`, `pivot`
+ou `stop`.
+
 Entregas:
 
 - exportação sanitizada;
@@ -874,6 +880,10 @@ Entregas:
 ### Phase 6 — MCP
 
 **Objetivo:** oferecer contexto operacional seguro a coding agents.
+
+**Status atual:** o MCP mínimo somente leitura está autorizado pela
+[Decision 004](decisions/004-agent-ready-side-project.md), mas ainda não foi
+implementado e permanece pendente de sua própria slice.
 
 Entregas:
 

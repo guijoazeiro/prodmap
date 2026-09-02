@@ -149,7 +149,7 @@ Phase 4 Slice 4.1 adds `prodmap baseline`: a read-only, exact prior-window
 reference for one service or endpoint metric. It reports `AVAILABLE/LOW` only
 for one eligible `[at-window,at)` telemetry window and otherwise reports
 `UNKNOWN`; it does not persist a baseline, detect regression, or claim
-causality. Phase 5 remains blocked.
+causality. At that Phase 4 gate, Phase 5 remained blocked.
 
 Slice 4.2 adds `prodmap regression --deployment <UUID>` as a read-only exact
 before/after comparison. It returns mechanical deltas and separate baseline,
@@ -158,9 +158,22 @@ conservative `regression-threshold/v1-experimental` classification:
 `UNKNOWN` for insufficient evidence, `NO_SIGNAL` when experimental thresholds
 are not met, and `CANDIDATE` when they are met. `CANDIDATE` is not a confirmed
 regression, `NO_SIGNAL` does not prove healthy behavior, and no result claims
-causality. Phase 5 remains blocked.
+causality. At that Phase 4 gate, Phase 5 remained blocked.
 
-Metrics/logs ingestion, a live receiver in Prodmap, generic export, MCP, causal
+Decision 004 authorizes Phases 5 and 6 as a bounded technical evolution: the
+read-only investigation view, a reproducible package, and a minimal read-only
+MCP. Slice 5.1 is implemented:
+
+```bash
+./bin/prodmap investigate --deployment <UUID> --metric latency_p95 --json
+```
+
+It composes existing regression, topology, and timeline read models without
+creating a new conclusion or asserting causality. The reproducible package and
+minimal read-only MCP are authorized but remain pending their own slices; this
+is neither commercial validation nor a formal `go`, `pivot`, or `stop`.
+
+Metrics/logs ingestion, a live receiver in Prodmap, generic export, causal
 scoring, and confirmation of a regression remain out of scope. Experiment 001
 has not been executed by this implementation.
 
