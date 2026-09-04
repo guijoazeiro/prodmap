@@ -67,11 +67,11 @@ func NewApp(stdout, stderr io.Writer, buildInfo BuildInfo) *App {
 // Run executes one CLI invocation and returns its process exit code.
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|baseline|regression|deployments|deploys|timeline> [flags]")
+		fmt.Fprintln(a.Stderr, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|baseline|regression|investigate|package|mcp|deployments|deploys|timeline> [flags]")
 		return ExitCode(errs.ErrInvalid)
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(a.Stdout, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|baseline|regression|deployments|deploys|timeline> [flags]")
+		fmt.Fprintln(a.Stdout, "usage: prodmap <version|init|doctor|status|services|runtime|explain|telemetry|graph|endpoints|baseline|regression|investigate|package|mcp|deployments|deploys|timeline> [flags]")
 		return 0
 	}
 
@@ -85,6 +85,9 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	if command == "deployments" && len(args) > 2 && args[1] == "sync" && args[2] == "github-actions" {
 		publicCommand = "deployments sync github-actions"
+	}
+	if command == "package" && len(args) > 1 && (args[1] == "create" || args[1] == "verify") {
+		publicCommand = "package " + args[1]
 	}
 	jsonRequested := containsJSONFlag(args[1:])
 	var err error
@@ -113,6 +116,12 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		err = a.runBaseline(ctx, args[1:])
 	case "regression":
 		err = a.runRegression(ctx, args[1:])
+	case "investigate":
+		err = a.runInvestigate(ctx, args[1:])
+	case "package":
+		err = a.runPackage(ctx, args[1:])
+	case "mcp":
+		err = a.runMCP(ctx, args[1:])
 	case "deployments":
 		err = a.runDeployments(ctx, args[1:])
 	case "deploys":
@@ -138,6 +147,15 @@ func (a *App) Run(ctx context.Context, args []string) int {
 			return 0
 		case len(args) == 2 && args[1] == "regression":
 			writeRegressionUsage(a.Stdout)
+			return 0
+		case len(args) == 2 && args[1] == "investigate":
+			writeInvestigateUsage(a.Stdout)
+			return 0
+		case len(args) == 2 && args[1] == "package":
+			writePackageUsage(a.Stdout)
+			return 0
+		case len(args) == 2 && args[1] == "mcp":
+			writeMCPUsage(a.Stdout)
 			return 0
 		default:
 			err = fmt.Errorf("unknown help topic: %w", errs.ErrInvalid)

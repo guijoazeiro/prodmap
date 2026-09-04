@@ -350,9 +350,16 @@ O [Phase 3 Technical Gate Review](reviews/phase-3-gate-review.md) registra a
 avaliação técnica dessa autorização limitada. Ele não substitui a decisão formal
 da Phase -1 nem autorizava a Phase 4 naquele instante. A
 [Decision 003](decisions/003-phase-4-limited-learning.md) autoriza depois a
-Phase 4 apenas como aprendizado limitado, mantendo a Phase 5 bloqueada.
+Phase 4 apenas como aprendizado limitado, mantendo a Phase 5 bloqueada naquele
+instante.
 O [Phase 4 Gate Review](reviews/phase-4-gate-review.md) registra o PASS técnico
-com limitações e preserva o bloqueio da Phase 5.
+com limitações e preserva o bloqueio histórico da Phase 5 naquele gate.
+A [Decision 004](decisions/004-agent-ready-side-project.md) autoriza depois as
+Phases 5 e 6 como evolução técnica limitada: as Slices 5.1 de composição
+somente leitura, 5.2 de pacote sanitizado offline e verificável, e 6 de MCP
+stdio local estão implementadas, sem fontes brutas, persistência ou migration.
+O MCP expõe exatamente `investigate_deployment`; isso não constitui validação
+comercial nem decisão formal `go`, `pivot` ou `stop`.
 
 ---
 
@@ -1393,7 +1400,6 @@ Estas decisões exigem experimento ou ADR adicional antes da fase correspondente
 - extensões futuras da normalização de nomes de serviços além da regra fechada da Phase 2A;
 - estratégia de compactação e retenção;
 - formato do investigation package;
-- transporte do servidor MCP;
 - política de compatibilidade entre minors.
 
 “Aberta” não autoriza implementação arbitrária. A issue responsável deve resolver a decisão e registrar o ADR antes de introduzir dependência ou contrato duradouro.
