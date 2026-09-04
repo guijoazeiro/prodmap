@@ -864,9 +864,9 @@ Entregas:
 
 **Status atual:** as Phases 5 e 6 estão autorizadas como evolução técnica
 limitada do side project pela [Decision 004](decisions/004-agent-ready-side-project.md).
-A Slice 5.1 está implementada; o pacote reproduzível continua pendente de sua
-própria slice. Isso não é validação comercial nem decisão formal `go`, `pivot`
-ou `stop`.
+As Slices 5.1 e 5.2 estão implementadas; a segunda cria um pacote sanitizado,
+portátil e verificável offline, sem fontes brutas, persistência ou migration.
+Isso não é validação comercial nem decisão formal `go`, `pivot` ou `stop`.
 
 Entregas:
 

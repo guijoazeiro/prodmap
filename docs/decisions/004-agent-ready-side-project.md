@@ -28,5 +28,6 @@ formal `go`, `pivot`, or `stop` decision.
 - Product thesis: INCONCLUSIVE.
 - Formal `go` / `pivot` / `stop`: NOT MADE.
 - Slice 5.1: IMPLEMENTED as a bounded, read-only side project.
-- Reproducible package: authorized but pending its own slice.
+- Slice 5.2: IMPLEMENTED as a reproducible, sanitized, offline-verifiable
+  package without persistence or raw sources.
 - Minimal read-only MCP: authorized but pending its own slice.

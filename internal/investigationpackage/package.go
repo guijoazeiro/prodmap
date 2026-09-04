@@ -116,10 +116,15 @@ func Create(ctx context.Context, request CreateRequest) (CreateResult, error) {
 	}
 	sums := checksumFile(manifestJSON, investigationJSON)
 	contents := map[string][]byte{"manifest.json": manifestJSON, "investigation.json": investigationJSON, "SHA256SUMS": sums}
+	totalSize := int64(0)
 	for _, name := range requiredFiles {
 		if int64(len(contents[name])) > maxEntrySize {
 			return CreateResult{}, fmt.Errorf("%w: %s exceeds the package entry limit", errs.ErrInvalid, name)
 		}
+		totalSize += int64(len(contents[name]))
+	}
+	if totalSize > maxTotalSize {
+		return CreateResult{}, fmt.Errorf("%w: package size limit exceeded", errs.ErrInvalid)
 	}
 
 	if err := writeAtomicZip(ctx, request.OutputPath, createdAt, contents); err != nil {
@@ -139,6 +144,10 @@ func Verify(ctx context.Context, path string) (VerifyResult, error) {
 	}
 	if strings.TrimSpace(path) == "" {
 		return VerifyResult{}, fmt.Errorf("%w: package file is required", errs.ErrInvalid)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return VerifyResult{}, fmt.Errorf("%w: package file must be regular", errs.ErrInvalid)
 	}
 	archive, err := zip.OpenReader(path)
 	if err != nil {
@@ -254,7 +263,7 @@ func readPackageFiles(ctx context.Context, files []*zip.File) (map[string][]byte
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !utf8.ValidString(file.Name) || !slices.Contains(requiredFiles, file.Name) || strings.ContainsAny(file.Name, `\\/`) || file.FileInfo().IsDir() || file.Mode()&os.ModeSymlink != 0 {
+		if !utf8.ValidString(file.Name) || !slices.Contains(requiredFiles, file.Name) || strings.ContainsAny(file.Name, `\\/`) || !file.Mode().IsRegular() || file.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("%w: invalid package ZIP entry", errs.ErrInvalid)
 		}
 		if _, exists := result[file.Name]; exists {
@@ -304,7 +313,7 @@ func validateManifestBytes(data []byte) (manifest, error) {
 		return manifest{}, fmt.Errorf("%w: invalid package manifest", errs.ErrInvalid)
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, value.CreatedAt)
-	if err != nil || createdAt.Location() != time.UTC || !strings.HasSuffix(value.CreatedAt, "Z") || value.FormatVersion != FormatVersion || value.InvestigationVersion == "" || value.InvestigationKey == "" || value.RedactionProfile != RedactionProfile || value.CausalityClaimed || value.Investigation.Name != "investigation.json" || !validSHA256(value.Investigation.SHA256) || value.Investigation.Size < 0 || value.Investigation.MediaType != MediaType {
+	if err != nil || value.CreatedAt != createdAt.UTC().Format(time.RFC3339Nano) || value.FormatVersion != FormatVersion || value.InvestigationVersion == "" || !validInvestigationKey(value.InvestigationKey) || value.RedactionProfile != RedactionProfile || value.CausalityClaimed || value.Investigation.Name != "investigation.json" || !validSHA256(value.Investigation.SHA256) || value.Investigation.Size < 0 || value.Investigation.MediaType != MediaType {
 		return manifest{}, fmt.Errorf("%w: invalid package manifest", errs.ErrInvalid)
 	}
 	return value, nil
@@ -376,6 +385,11 @@ func validSHA256(value string) bool {
 	return true
 }
 
+func validInvestigationKey(value string) bool {
+	remainder, ok := strings.CutPrefix(value, "sha256:")
+	return ok && validSHA256(remainder)
+}
+
 func scanRedaction(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
@@ -408,7 +422,7 @@ func scanValue(value any, key string) error {
 		}
 	case string:
 		lower := strings.ToLower(typed)
-		if strings.HasPrefix(typed, "/") || strings.Contains(lower, "authorization:") || strings.Contains(lower, "bearer ") || strings.Contains(lower, "token=") || strings.Contains(lower, "password=") || strings.Contains(lower, "://") && (strings.Contains(lower, "@") || strings.Contains(lower, "token") || strings.Contains(lower, "password")) {
+		if strings.HasPrefix(typed, "/") || containsAbsolutePath(typed) || strings.Contains(lower, "authorization") || strings.Contains(lower, "bearer") || strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "postgres://") || strings.Contains(lower, "mysql://") || strings.Contains(lower, "sqlite:") || strings.Contains(lower, "file:") || strings.Contains(lower, "://") && strings.Contains(lower, "@") {
 			return fmt.Errorf("%w: prohibited content in investigation package", errs.ErrInvalid)
 		}
 	}
@@ -417,7 +431,16 @@ func scanValue(value any, key string) error {
 
 func prohibitedKey(key string) bool {
 	lower := strings.ToLower(key)
-	return lower == "external_id" || lower == "git_head" || lower == "vcs_revision" || lower == "image_reference" || lower == "image_id" || lower == "artifact_identity" || strings.Contains(lower, "token") || strings.Contains(lower, "authorization") || strings.Contains(lower, "password") || strings.Contains(lower, "dsn") || strings.Contains(lower, "payload") || strings.Contains(lower, "http_body") || strings.Contains(lower, "raw_")
+	return lower == "external_id" || lower == "git_head" || lower == "vcs_revision" || lower == "image_reference" || lower == "image_id" || lower == "artifact_identity" || lower == "body" || strings.Contains(lower, "token") || strings.Contains(lower, "authorization") || strings.Contains(lower, "password") || strings.Contains(lower, "dsn") || strings.Contains(lower, "payload") || strings.Contains(lower, "http_body") || strings.Contains(lower, "raw_")
+}
+
+func containsAbsolutePath(value string) bool {
+	for _, field := range strings.Fields(value) {
+		if strings.HasPrefix(field, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 type investigationDocument struct {
@@ -676,11 +699,21 @@ func timelineFrom(result investigation.Result) timelineDocument {
 }
 
 func validateDocument(value investigationDocument) error {
-	if value.InvestigationVersion == "" || value.InvestigationKey == "" || value.Status == "" || value.CausalityClaimed || value.Regression.CausalityClaimed || value.Regression.Classification == nil || value.Regression.Classification.CausalityClaimed || value.Deployment.ID == "" || value.Regression.ComparisonKey == "" || value.Regression.Deployment.ID != value.Deployment.ID {
+	if value.InvestigationVersion == "" || !validInvestigationKey(value.InvestigationKey) || value.Status == "" || value.CausalityClaimed || value.Regression.CausalityClaimed || value.Regression.Classification == nil || value.Regression.Classification.CausalityClaimed || value.Deployment.ID == "" || value.Regression.ComparisonKey == "" || value.Regression.Deployment.ID != value.Deployment.ID {
 		return fmt.Errorf("%w: invalid investigation document", errs.ErrInvalid)
 	}
 	if value.Limitations == nil || value.Topology.Roots == nil || value.Topology.Nodes == nil || value.Topology.Edges == nil || value.Timeline.Items == nil || value.EvidenceReferences.AcceptedWindowIDs == nil || value.EvidenceReferences.RejectedWindowIDs == nil || value.EvidenceReferences.GraphEvidenceIDs == nil || value.EvidenceReferences.TimelineEventIDs == nil || value.Regression.Before.AcceptedWindows == nil || value.Regression.Before.RejectedWindows == nil || value.Regression.After.AcceptedWindows == nil || value.Regression.After.RejectedWindows == nil || value.Regression.Contamination.BeforeDeployments == nil || value.Regression.Contamination.AfterDeployments == nil || value.Regression.Contamination.ConcurrentDeployments == nil || value.Regression.BaselineConfidence.Limitations == nil || value.Regression.ObservationConfidence.Limitations == nil || value.Regression.RegressionConfidence.Limitations == nil || value.Regression.Classification.Confidence.Limitations == nil {
 		return fmt.Errorf("%w: investigation arrays must not be null", errs.ErrInvalid)
+	}
+	for _, edge := range value.Topology.Edges {
+		if edge.EvidenceIDs == nil || edge.Limitations == nil {
+			return fmt.Errorf("%w: investigation arrays must not be null", errs.ErrInvalid)
+		}
+	}
+	for _, event := range value.Timeline.Items {
+		if event.Limitations == nil || event.CausalityClaimed {
+			return fmt.Errorf("%w: invalid investigation document", errs.ErrInvalid)
+		}
 	}
 	return nil
 }

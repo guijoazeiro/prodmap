@@ -355,10 +355,11 @@ instante.
 O [Phase 4 Gate Review](reviews/phase-4-gate-review.md) registra o PASS técnico
 com limitações e preserva o bloqueio histórico da Phase 5 naquele gate.
 A [Decision 004](decisions/004-agent-ready-side-project.md) autoriza depois as
-Phases 5 e 6 como evolução técnica limitada: a Slice 5.1 de composição somente
-leitura está implementada, enquanto o pacote reproduzível e o MCP mínimo
-somente leitura estão autorizados, mas pendentes de suas próprias slices. Isso
-não constitui validação comercial nem decisão formal `go`, `pivot` ou `stop`.
+Phases 5 e 6 como evolução técnica limitada: as Slices 5.1 de composição
+somente leitura e 5.2 de pacote sanitizado, offline e verificável estão
+implementadas, sem fontes brutas, persistência ou migration. O MCP mínimo
+somente leitura está autorizado, mas pendente de sua própria slice. Isso não
+constitui validação comercial nem decisão formal `go`, `pivot` ou `stop`.
 
 ---
 

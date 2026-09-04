@@ -162,16 +162,20 @@ causality. At that Phase 4 gate, Phase 5 remained blocked.
 
 Decision 004 authorizes Phases 5 and 6 as a bounded technical evolution: the
 read-only investigation view, a reproducible package, and a minimal read-only
-MCP. Slice 5.1 is implemented:
+MCP. Slices 5.1 and 5.2 are implemented:
 
 ```bash
 ./bin/prodmap investigate --deployment <UUID> --metric latency_p95 --json
+./bin/prodmap package create --deployment <UUID> --metric latency_p95 --output investigation.zip --json
+./bin/prodmap package verify --file investigation.zip --json
 ```
 
-It composes existing regression, topology, and timeline read models without
-creating a new conclusion or asserting causality. The reproducible package and
-minimal read-only MCP are authorized but remain pending their own slices; this
-is neither commercial validation nor a formal `go`, `pivot`, or `stop`.
+They compose existing regression, topology, and timeline read models without
+creating a new conclusion or asserting causality. The package contains only the
+sanitized investigation projection, is verified offline, and neither persists
+the investigation nor exposes raw sources. The minimal read-only MCP remains
+authorized but pending its own slice; this is neither commercial validation nor
+a formal `go`, `pivot`, or `stop`.
 
 Metrics/logs ingestion, a live receiver in Prodmap, generic export, causal
 scoring, and confirmation of a regression remain out of scope. Experiment 001
