@@ -59,6 +59,27 @@ type VerifyResult struct {
 	CausalityClaimed     bool
 }
 
+// Output is the immutable, allowlisted investigation projection shared by
+// portable packages and other local read-only transports.
+//
+// Its JSON form is deliberately stable: it contains no raw sources, paths, or
+// credentials and is validated by OutputFrom before it is returned.
+type Output = investigationDocument
+
+// OutputFrom returns the validated, allowlisted output projection for an
+// investigation. Callers must treat the returned value as immutable.
+func OutputFrom(result investigation.Result) (Output, error) {
+	output := documentFrom(result)
+	data, err := marshalDocument(output)
+	if err != nil {
+		return Output{}, err
+	}
+	if err := scanRedaction(data); err != nil {
+		return Output{}, err
+	}
+	return output, nil
+}
+
 type manifest struct {
 	FormatVersion        string        `json:"format_version"`
 	CreatedAt            string        `json:"created_at"`
@@ -90,7 +111,10 @@ func Create(ctx context.Context, request CreateRequest) (CreateResult, error) {
 		return CreateResult{}, fmt.Errorf("inspect package output: %w", err)
 	}
 
-	document := documentFrom(request.Investigation)
+	document, err := OutputFrom(request.Investigation)
+	if err != nil {
+		return CreateResult{}, err
+	}
 	investigationJSON, err := marshalDocument(document)
 	if err != nil {
 		return CreateResult{}, err

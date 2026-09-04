@@ -10,6 +10,7 @@ import (
 	"github.com/guijoazeiro/prodmap/internal/baseline"
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	"github.com/guijoazeiro/prodmap/internal/investigation"
+	investigationpackage "github.com/guijoazeiro/prodmap/internal/investigationpackage"
 	"github.com/guijoazeiro/prodmap/internal/regression"
 	"github.com/guijoazeiro/prodmap/internal/timeline"
 )
@@ -49,7 +50,10 @@ func (a *App) runInvestigate(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("compose investigation: %w", err)
 	}
-	data := investigationOutputFrom(result, generatedAt)
+	data, err := investigationpackage.OutputFrom(result)
+	if err != nil {
+		return fmt.Errorf("render investigation output: %w", err)
+	}
 	if *common.jsonOutput {
 		return WriteSuccess(a.Stdout, "investigate", generatedAt, data, []string{}, nil)
 	}

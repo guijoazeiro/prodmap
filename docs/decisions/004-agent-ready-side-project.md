@@ -30,4 +30,6 @@ formal `go`, `pivot`, or `stop` decision.
 - Slice 5.1: IMPLEMENTED as a bounded, read-only side project.
 - Slice 5.2: IMPLEMENTED as a reproducible, sanitized, offline-verifiable
   package without persistence or raw sources.
-- Minimal read-only MCP: authorized but pending its own slice.
+- Phase 6: IMPLEMENTED as a minimal local stdio MCP with exactly one read-only
+  `investigate_deployment` tool; it has no raw sources, persistence, or
+  migration.

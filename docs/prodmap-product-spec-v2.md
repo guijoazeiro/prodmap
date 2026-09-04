@@ -881,15 +881,17 @@ Entregas:
 
 **Objetivo:** oferecer contexto operacional seguro a coding agents.
 
-**Status atual:** o MCP mínimo somente leitura está autorizado pela
-[Decision 004](decisions/004-agent-ready-side-project.md), mas ainda não foi
-implementado e permanece pendente de sua própria slice.
+**Status atual:** o MCP mínimo somente leitura está implementado pela
+[Decision 004](decisions/004-agent-ready-side-project.md) como servidor stdio
+local com exatamente a tool `investigate_deployment`. Ele não expõe fontes
+brutas, não persiste resultados e não constitui validação comercial nem decisão
+formal `go`, `pivot` ou `stop`.
 
 Entregas:
 
 - servidor MCP somente leitura;
-- tools de contexto, timeline, regressão e evidência;
-- redaction, limites, paginação e auditoria;
+- uma tool de investigação que compõe contexto, timeline, regressão e evidência;
+- redaction e limites de tempo e tamanho;
 - threat model e testes contra dados não confiáveis;
 - benchmark agente bruto versus agente + Prodmap repetido.
 
