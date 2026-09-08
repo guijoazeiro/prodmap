@@ -172,6 +172,14 @@ func TestIncompatibleAssociationDoesNotContributeRemoteError(t *testing.T) {
 	}
 }
 
+func TestResourceServiceIdentityAllowsAuthenticationCapabilityNames(t *testing.T) {
+	for _, value := range []string{"token-service", "password-reset", "authorization-api", "bearer-worker", "secret-manager", "cookie-parser", "oauth-token-validator"} {
+		if !safeResourceServiceIdentity(value) {
+			t.Errorf("safeResourceServiceIdentity(%q) = false", value)
+		}
+	}
+}
+
 func TestCanonicalOTLPJSONDecodesHexIdentifiersNumericEnumsAndSpanLinks(t *testing.T) {
 	line := []byte(`{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"api"}}]},"scopeSpans":[{"spans":[{"traceId":"0102030405060708090A0B0C0D0E0F10","spanId":"1112131415161718","parentSpanId":"2122232425262728","kind":3,"startTimeUnixNano":"1787140801000000000","endTimeUnixNano":"1787140801000000001","status":{"code":2},"links":[{"traceId":"3132333435363738393A3B3C3D3E3F40","spanId":"4142434445464748"}]}]}]}]}`)
 	request, err := decodeOTLPJSONLine(line)

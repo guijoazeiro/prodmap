@@ -43,6 +43,19 @@ Prodmap ingests frozen OTLP traces only. Metrics and logs ingestion, a live rece
 - GNU Make for the documented build and test shortcuts.
 - Docker is optional and only needed for `runtime --refresh`.
 
+## Development tests
+
+```bash
+make test
+make test-integration
+```
+
+Normal tests do not require Docker. `make test-integration` is opt-in and
+requires Docker plus Compose; it creates only isolated test resources, exercises
+the Docker runtime source and the pinned Collector OTLP path, and does not use
+the reference application. CI runs it on pushes to `dev` and `main`, `v*` tags,
+and manual dispatches—not on pull requests.
+
 ## Install from source
 
 There are no release binaries yet. Build the current source checkout:
@@ -117,7 +130,7 @@ Create a portable package from the same read-only investigation composition, the
 ./bin/prodmap package verify --file investigation.zip --json
 ```
 
-The ZIP contains exactly `manifest.json`, `investigation.json`, and `SHA256SUMS`. Verification checks the closed file inventory, hashes, strict JSON, consistency, size limits, and redaction. This provides integrity checking, not a signature or proof of authorship/authenticity.
+The ZIP contains exactly `manifest.json`, `investigation.json`, and `SHA256SUMS`. Verification checks the closed file inventory, hashes, duplicate-free strict JSON, semantic consistency, size limits, and redaction. It validates integrity and analytical coherence, not a signature or proof of authorship/authenticity.
 
 ## Read-only MCP
 
@@ -141,7 +154,7 @@ Example generic MCP client configuration:
 }
 ```
 
-The server exposes exactly one tool: `investigate_deployment`. It requires a deployment UUIDv7 and a metric (`request_count`, `error_rate`, `latency_p50`, `latency_p95`, or `latency_p99`) and accepts optional before/after durations, minimum samples, and minimum coverage. It uses stdio, opens no HTTP port, accepts no arbitrary paths through the tool, is read-only, and never returns raw sources. Its confidence carries limitations and always declares `causality_claimed: false`.
+The server exposes exactly one tool: `investigate_deployment`. It requires a deployment UUIDv7 and a metric (`request_count`, `error_rate`, `latency_p50`, `latency_p95`, or `latency_p99`) and accepts optional before/after durations, minimum samples, and minimum coverage. It uses stdio, opens no HTTP port, accepts no arbitrary paths through the tool, is read-only, and never returns raw sources. MCP requires an already initialized, schema-compatible inventory: it opens SQLite with `mode=ro`, never creates a database or runs migrations, and a compatible inventory must be updated by an authorized write command outside MCP. Its confidence carries limitations and always declares `causality_claimed: false`.
 
 ## Commands
 

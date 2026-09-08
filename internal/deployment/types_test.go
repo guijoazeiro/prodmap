@@ -111,7 +111,7 @@ func TestValidateSourceResultRejectsForgedRemoteMetadata(t *testing.T) {
 	}
 }
 
-func TestDeploymentLedgerLoadRejectsDuplicateAndSecret(t *testing.T) {
+func TestDeploymentLedgerLoadRejectsDuplicateAndExplicitCredential(t *testing.T) {
 	directory := t.TempDir()
 	duplicate := filepath.Join(directory, "duplicate.jsonl")
 	contents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "deployment", "valid-two-services.jsonl"))
@@ -124,13 +124,51 @@ func TestDeploymentLedgerLoadRejectsDuplicateAndSecret(t *testing.T) {
 	if _, err := LoadFrozenFile(context.Background(), duplicate, time.Now()); !errors.Is(err, errs.ErrInvalid) {
 		t.Fatalf("duplicate error = %v", err)
 	}
-	secret := filepath.Join(directory, "secret.jsonl")
-	if err := os.WriteFile(secret, []byte(`{"schema_version":"1.0","deployment_id":"secret-token","deployed_at":"2026-08-26T12:00:00Z","build_started_at":"2026-08-26T11:58:00Z","build_date":"2026-08-26T11:59:00Z","environment":"reference","service":"checkout-api","version":"abc","scenario_profile":"healthy","git_head":"unknown","git_dirty":true,"vcs_revision":"unknown","vcs_revision_verified":false,"image_reference":"checkout-api:stable","image_id":"sha256:1111111111111111111111111111111111111111111111111111111111111111","repo_digest":null,"compose_project":"reference-project","status":"running"}`+"\n"), 0o600); err != nil {
+	credential := "token=fake-sensitive-value"
+	secret := filepath.Join(directory, "credential.jsonl")
+	if err := os.WriteFile(secret, []byte(`{"schema_version":"1.0","deployment_id":"deployment","deployed_at":"2026-08-26T12:00:00Z","build_started_at":"2026-08-26T11:59:00Z","build_date":"2026-08-26T11:58:00Z","environment":"reference","service":"checkout-api","version":"`+credential+`","scenario_profile":"healthy","git_head":"unknown","git_dirty":true,"vcs_revision":"unknown","vcs_revision_verified":false,"image_reference":"checkout-api:stable","image_id":"sha256:1111111111111111111111111111111111111111111111111111111111111111","repo_digest":null,"compose_project":"reference-project","status":"running"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadFrozenFile(context.Background(), secret, time.Now()); !errors.Is(err, errs.ErrInvalid) {
-		t.Fatalf("secret error = %v", err)
+	if _, err := LoadFrozenFile(context.Background(), secret, time.Now()); !errors.Is(err, errs.ErrInvalid) || strings.Contains(err.Error(), credential) {
+		t.Fatalf("credential error = %v", err)
 	}
+}
+
+func TestDeploymentLedgerAllowsAuthenticationCapabilityNames(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "deployment", "valid-two-services.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 26, 12, 1, 0, 0, time.UTC)
+	for _, service := range []string{"token-service", "password-reset", "authorization-api", "bearer-worker", "secret-manager", "cookie-parser", "oauth-token-validator"} {
+		t.Run(service, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ledger.jsonl")
+			ledger := strings.Replace(string(contents), `"service":"checkout-api"`, `"service":"`+service+`"`, 1)
+			if err := os.WriteFile(path, []byte(ledger), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			first, err := LoadFrozenFile(t.Context(), path, at)
+			if err != nil {
+				t.Fatalf("LoadFrozenFile() error = %v", err)
+			}
+			second, err := LoadFrozenFile(t.Context(), path, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.Format != Format || first.SourceHash != second.SourceHash || !ledgerHasService(first, service) {
+				t.Fatalf("ledger=%+v replay=%+v", first, second)
+			}
+		})
+	}
+}
+
+func ledgerHasService(snapshot Snapshot, service string) bool {
+	for _, record := range snapshot.Records {
+		if record.Service == service {
+			return true
+		}
+	}
+	return false
 }
 
 func TestValidateSnapshotRejectsForgedBoundaryData(t *testing.T) {

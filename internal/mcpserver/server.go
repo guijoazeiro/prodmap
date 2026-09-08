@@ -31,10 +31,14 @@ type Reader interface {
 	investigation.Reader
 }
 
+// OpenReader creates one short-lived reader for a single tool call. The close
+// function must release its snapshot before the result is rendered.
+type OpenReader func(context.Context) (Reader, func() error, error)
+
 // Config makes local MCP server dependencies explicit.
 type Config struct {
-	Reader Reader
-	Now    func() time.Time
+	OpenReader OpenReader
+	Now        func() time.Time
 }
 
 type metric string
@@ -51,7 +55,7 @@ type Input struct {
 
 // New constructs the MCP server with exactly one read-only tool.
 func New(config Config) (*mcp.Server, error) {
-	if config.Reader == nil {
+	if config.OpenReader == nil {
 		return nil, fmt.Errorf("MCP reader is required: %w", errs.ErrInvalid)
 	}
 	if config.Now == nil {
@@ -103,10 +107,27 @@ func handle(ctx context.Context, config Config, input Input) (*mcp.CallToolResul
 	ctx, cancel := context.WithTimeout(ctx, maxCallDuration)
 	defer cancel()
 	generatedAt := config.Now().UTC()
-	result, err := investigation.Compose(ctx, config.Reader, investigation.Query{Comparison: query, GeneratedAt: generatedAt})
+	reader, closeReader, err := config.OpenReader(ctx)
 	if err != nil {
 		return nil, investigationpackage.Output{}, publicError(err)
 	}
+	if reader == nil || closeReader == nil {
+		return nil, investigationpackage.Output{}, publicError(fmt.Errorf("MCP reader factory returned an invalid snapshot: %w", errs.ErrIncompatible))
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = closeReader()
+		}
+	}()
+	result, err := investigation.Compose(ctx, reader, investigation.Query{Comparison: query, GeneratedAt: generatedAt})
+	if err != nil {
+		return nil, investigationpackage.Output{}, publicError(err)
+	}
+	if err := closeReader(); err != nil {
+		return nil, investigationpackage.Output{}, publicError(err)
+	}
+	closed = true
 	output, err := investigationpackage.OutputFrom(result)
 	if err != nil {
 		return nil, investigationpackage.Output{}, publicError(err)

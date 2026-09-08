@@ -358,6 +358,8 @@ A [Decision 004](decisions/004-agent-ready-side-project.md) autoriza depois as
 Phases 5 e 6 como evolução técnica limitada: as Slices 5.1 de composição
 somente leitura, 5.2 de pacote sanitizado offline e verificável, e 6 de MCP
 stdio local estão implementadas, sem fontes brutas, persistência ou migration.
+O verificador do pacote também rejeita incoerência semântica e JSON com chaves
+duplicadas, permanecendo offline e sem alegar autenticidade.
 O MCP expõe exatamente `investigate_deployment`; isso não constitui validação
 comercial nem decisão formal `go`, `pivot` ou `stop`.
 

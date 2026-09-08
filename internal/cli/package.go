@@ -60,13 +60,13 @@ func (a *App) runPackageCreate(ctx context.Context, args []string) error {
 	if flags.NArg() != 0 || strings.TrimSpace(*output) == "" || regression.ValidateQuery(query) != nil {
 		return fmt.Errorf("invalid package create flags: %w", errs.ErrInvalid)
 	}
-	_, store, err := a.openInventory(ctx, common)
+	_, store, err := a.openInventoryReadOnly(ctx, common)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 	createdAt := a.Now().UTC()
-	result, err := investigation.Compose(ctx, store, investigation.Query{Comparison: query, GeneratedAt: createdAt})
+	result, err := composeInvestigationSnapshot(ctx, store, investigation.Query{Comparison: query, GeneratedAt: createdAt})
 	if err != nil {
 		return fmt.Errorf("compose package investigation: %w", err)
 	}

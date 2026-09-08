@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/guijoazeiro/prodmap/internal/errs"
@@ -27,6 +28,7 @@ const (
 // Store is a configured SQLite database.
 type Store struct {
 	db                    *sql.DB
+	readOnly              bool
 	now                   func() time.Time
 	evidenceBatchObserver func(int)
 }
@@ -81,6 +83,92 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	return store, nil
 }
 
+// OpenReadOnly opens an existing, fully compatible database without changing
+// its schema, permissions, journal mode, or logical contents.
+func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(path) == "" || path == ":memory:" {
+		return nil, fmt.Errorf("%w: database path must name an existing file", errs.ErrInvalid)
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: database does not exist", errs.ErrNotFound)
+	}
+	if err != nil {
+		return nil, classifyOpenError("inspect database path", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: database path must name a regular file", errs.ErrInvalid)
+	}
+
+	dsn, err := sqliteReadOnlyDSN(path)
+	if err != nil {
+		return nil, classifyOpenError("construct read-only database connection", err)
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, classifyOpenError("open read-only database", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	closeOnError := func(err error) (*Store, error) {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		return closeOnError(classifyOpenError("connect to read-only database", err))
+	}
+	if err := validateReadOnlySchema(ctx, db, embeddedMigrations); err != nil {
+		return closeOnError(err)
+	}
+	return &Store{db: db, readOnly: true, now: time.Now}, nil
+}
+
+type queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// ReadSnapshot is one deferred, read-only SQLite transaction for an
+// investigation. It intentionally exposes only the read models it supports.
+type ReadSnapshot struct {
+	tx   *sql.Tx
+	once sync.Once
+	err  error
+}
+
+// BeginReadSnapshot starts a deferred transaction on a read-only Store.
+func (s *Store) BeginReadSnapshot(ctx context.Context) (*ReadSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s == nil || s.db == nil || !s.readOnly {
+		return nil, fmt.Errorf("%w: read snapshot requires a read-only store", errs.ErrInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, classifyOpenError("begin read snapshot", err)
+	}
+	return &ReadSnapshot{tx: tx}, nil
+}
+
+// Close releases the read transaction. Rollback is the successful completion
+// path because a read snapshot has no writes to commit.
+func (s *ReadSnapshot) Close() error {
+	if s == nil || s.tx == nil {
+		return nil
+	}
+	s.once.Do(func() {
+		s.err = s.tx.Rollback()
+		if errors.Is(s.err, sql.ErrTxDone) {
+			s.err = nil
+		}
+	})
+	return s.err
+}
+
 func (s *Store) clockNow() time.Time {
 	if s != nil && s.now != nil {
 		return s.now().UTC()
@@ -99,6 +187,22 @@ func configure(ctx context.Context, db *sql.DB) error {
 }
 
 func sqliteDSN(path string) (string, error) {
+	return sqliteURI(path, func(query url.Values) {
+		query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMilliseconds))
+		query.Set("_foreign_keys", "1")
+		query.Set("_txlock", "immediate")
+	})
+}
+
+func sqliteReadOnlyDSN(path string) (string, error) {
+	return sqliteURI(path, func(query url.Values) {
+		query.Set("mode", "ro")
+		query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMilliseconds))
+		query.Set("_query_only", "1")
+	})
+}
+
+func sqliteURI(path string, configure func(url.Values)) (string, error) {
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
@@ -108,9 +212,7 @@ func sqliteDSN(path string) (string, error) {
 		uriPath = "/" + uriPath
 	}
 	query := url.Values{}
-	query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMilliseconds))
-	query.Set("_foreign_keys", "1")
-	query.Set("_txlock", "immediate")
+	configure(query)
 	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
 }
 

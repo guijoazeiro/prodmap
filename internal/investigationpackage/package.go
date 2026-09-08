@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,9 +20,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/guijoazeiro/prodmap/internal/baseline"
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	"github.com/guijoazeiro/prodmap/internal/investigation"
+	"github.com/guijoazeiro/prodmap/internal/redaction"
 	"github.com/guijoazeiro/prodmap/internal/regression"
+	"github.com/guijoazeiro/prodmap/internal/timeline"
+	"github.com/guijoazeiro/prodmap/internal/topology"
 )
 
 const (
@@ -366,6 +371,9 @@ func validateDocumentBytes(data []byte) (investigationDocument, error) {
 }
 
 func decodeStrict(data []byte, target any) error {
+	if err := rejectDuplicateKeys(data); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -376,6 +384,63 @@ func decodeStrict(data []byte, target any) error {
 		return errors.New("trailing JSON data")
 	}
 	return nil
+}
+
+// rejectDuplicateKeys walks JSON tokens before typed decoding. Object key tokens
+// are decoded by encoding/json, so escaped spellings compare by their actual key.
+func rejectDuplicateKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := walkJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("trailing JSON data")
+	}
+	return nil
+}
+
+func walkJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		keys := make(map[string]struct{})
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			if !ok {
+				return errors.New("invalid JSON object key")
+			}
+			if _, exists := keys[name]; exists {
+				return errors.New("duplicate JSON object key")
+			}
+			keys[name] = struct{}{}
+			if err := walkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	case '[':
+		for decoder.More() {
+			if err := walkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
 }
 
 func digest(data []byte) string {
@@ -431,7 +496,7 @@ func scanValue(value any, key string) error {
 	switch typed := value.(type) {
 	case map[string]any:
 		for nestedKey, nestedValue := range typed {
-			if prohibitedKey(nestedKey) {
+			if redaction.ProhibitedKey(nestedKey) {
 				return fmt.Errorf("%w: prohibited field in investigation package", errs.ErrInvalid)
 			}
 			if err := scanValue(nestedValue, nestedKey); err != nil {
@@ -445,26 +510,20 @@ func scanValue(value any, key string) error {
 			}
 		}
 	case string:
-		lower := strings.ToLower(typed)
-		if strings.HasPrefix(typed, "/") || containsAbsolutePath(typed) || strings.Contains(lower, "authorization") || strings.Contains(lower, "bearer") || strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "postgres://") || strings.Contains(lower, "mysql://") || strings.Contains(lower, "sqlite:") || strings.Contains(lower, "file:") || strings.Contains(lower, "://") && strings.Contains(lower, "@") {
+		if err := redaction.ValidatePublicValue(publicValueKind(key), typed); err != nil {
 			return fmt.Errorf("%w: prohibited content in investigation package", errs.ErrInvalid)
 		}
 	}
 	return nil
 }
 
-func prohibitedKey(key string) bool {
-	lower := strings.ToLower(key)
-	return lower == "external_id" || lower == "git_head" || lower == "vcs_revision" || lower == "image_reference" || lower == "image_id" || lower == "artifact_identity" || lower == "body" || strings.Contains(lower, "token") || strings.Contains(lower, "authorization") || strings.Contains(lower, "password") || strings.Contains(lower, "dsn") || strings.Contains(lower, "payload") || strings.Contains(lower, "http_body") || strings.Contains(lower, "raw_")
-}
-
-func containsAbsolutePath(value string) bool {
-	for _, field := range strings.Fields(value) {
-		if strings.HasPrefix(field, "/") {
-			return true
-		}
+func publicValueKind(key string) redaction.ValueKind {
+	switch key {
+	case "service", "environment", "logical_key", "display_name", "id", "type", "kind", "metric", "unit", "status", "relation_type":
+		return redaction.Identifier
+	default:
+		return redaction.FreeText
 	}
-	return false
 }
 
 type investigationDocument struct {
@@ -739,7 +798,424 @@ func validateDocument(value investigationDocument) error {
 			return fmt.Errorf("%w: invalid investigation document", errs.ErrInvalid)
 		}
 	}
+	if err := validateDocumentSemantics(value); err != nil {
+		return fmt.Errorf("%w: invalid investigation semantics", errs.ErrInvalid)
+	}
 	return nil
+}
+
+func validateDocumentSemantics(value investigationDocument) error {
+	if value.InvestigationVersion != investigation.Version || !availableStatus(value.Status) || !sameDeployment(value.Deployment, value.Regression.Deployment) || !validDeployment(value.Deployment) {
+		return errors.New("invalid version, status, or deployment")
+	}
+	deploymentAt, err := parseTimestamp(value.Deployment.StartedAt)
+	if err != nil {
+		return err
+	}
+	comparison, err := regressionFromDocument(value.Regression)
+	if err != nil {
+		return err
+	}
+	if comparison.Status != value.Status || comparison.Deployment.StartedAt != deploymentAt {
+		return errors.New("inconsistent regression")
+	}
+	classification, err := regression.Classify(context.Background(), comparison)
+	if err != nil {
+		return err
+	}
+	if !sameClassification(classificationDocumentFrom(classification), *value.Regression.Classification) {
+		return errors.New("inconsistent classification")
+	}
+	if err := validateTopology(value.Topology, value.Deployment, deploymentAt); err != nil {
+		return err
+	}
+	if err := validateTimeline(value.Timeline, value.Deployment, comparison); err != nil {
+		return err
+	}
+	if err := validateEvidenceReferences(value); err != nil {
+		return err
+	}
+	result, err := investigationFromDocument(value, comparison, deploymentAt)
+	if err != nil {
+		return err
+	}
+	calculated, err := investigation.CalculateKey(result)
+	if err != nil || calculated != value.InvestigationKey {
+		return errors.New("inconsistent investigation key")
+	}
+	return nil
+}
+
+func availableStatus(value string) bool { return value == "AVAILABLE" || value == "UNKNOWN" }
+
+func validDeployment(value deploymentDocument) bool {
+	return validUUIDv7(value.ID) && value.Environment != "" && value.Service != ""
+}
+
+func sameDeployment(left, right deploymentDocument) bool {
+	return left.ID == right.ID && left.Environment == right.Environment && left.Service == right.Service && left.StartedAt == right.StartedAt
+}
+
+func validUUIDv7(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[14] != '7' || value[18] != '-' || value[19] < '8' || value[19] > 'b' || value[23] != '-' {
+		return false
+	}
+	for index := range len(value) {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if !((value[index] >= '0' && value[index] <= '9') || (value[index] >= 'a' && value[index] <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseTimestamp(value string) (time.Time, error) {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil || parsed.IsZero() || value != parsed.UTC().Format(time.RFC3339Nano) {
+		return time.Time{}, errors.New("invalid timestamp")
+	}
+	return parsed.UTC(), nil
+}
+
+func parseWindow(value windowDocument) (time.Time, time.Time, error) {
+	start, err := parseTimestamp(value.Start)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	end, err := parseTimestamp(value.End)
+	if err != nil || !start.Before(end) {
+		return time.Time{}, time.Time{}, errors.New("invalid interval")
+	}
+	return start, end, nil
+}
+
+func finiteDomain(value *float64, minimum, maximum float64) bool {
+	return value == nil || (!math.IsNaN(*value) && !math.IsInf(*value, 0) && *value >= minimum && *value <= maximum)
+}
+
+func regressionFromDocument(value regressionDocument) (regression.Result, error) {
+	if value.AlgorithmVersion != regression.AlgorithmVersion || !validComparisonKey(value.ComparisonKey) || !availableStatus(value.Status) || !validMetricUnit(value.Metric, value.Unit) || value.CausalityClaimed {
+		return regression.Result{}, errors.New("invalid regression")
+	}
+	deploymentTime, err := parseTimestamp(value.Deployment.StartedAt)
+	if err != nil || !validDeployment(value.Deployment) {
+		return regression.Result{}, errors.New("invalid regression deployment")
+	}
+	before, err := sideFromDocument(value.Before, baseline.AlgorithmVersion)
+	if err != nil {
+		return regression.Result{}, err
+	}
+	after, err := sideFromDocument(value.After, regression.ObservationAlgorithmVersion)
+	if err != nil {
+		return regression.Result{}, err
+	}
+	if !before.WindowEnd.Equal(deploymentTime) || !after.WindowStart.Equal(deploymentTime) {
+		return regression.Result{}, errors.New("inconsistent comparison intervals")
+	}
+	if !validConfidence(value.BaselineConfidence, baseline.AlgorithmVersion) || !validConfidence(value.ObservationConfidence, regression.ObservationAlgorithmVersion) || !validConfidence(value.RegressionConfidence, regression.AlgorithmVersion) || !finiteDomain(value.AbsoluteDelta, math.Inf(-1), math.Inf(1)) || !finiteDomain(value.RelativeDelta, math.Inf(-1), math.Inf(1)) || !validIDs(value.Contamination.BeforeDeployments) || !validIDs(value.Contamination.AfterDeployments) || !validIDs(value.Contamination.ConcurrentDeployments) {
+		return regression.Result{}, errors.New("invalid regression confidence or values")
+	}
+	result := regression.Result{ComparisonKey: value.ComparisonKey, Status: value.Status, AlgorithmVersion: value.AlgorithmVersion, Deployment: regression.Deployment{ID: value.Deployment.ID, Environment: value.Deployment.Environment, Service: value.Deployment.Service, StartedAt: deploymentTime}, Metric: baseline.Metric(value.Metric), Unit: value.Unit, Before: before, After: after, AbsoluteDelta: floatCopy(value.AbsoluteDelta), RelativeDelta: floatCopy(value.RelativeDelta), Contamination: regression.Contamination{BeforeDeployments: stringsCopy(value.Contamination.BeforeDeployments), AfterDeployments: stringsCopy(value.Contamination.AfterDeployments), ConcurrentDeployments: stringsCopy(value.Contamination.ConcurrentDeployments), Truncated: value.Contamination.Truncated}, BaselineConfidence: confidenceToDomain(value.BaselineConfidence), ObservationConfidence: confidenceToDomain(value.ObservationConfidence), RegressionConfidence: confidenceToDomain(value.RegressionConfidence)}
+	if value.Status == "AVAILABLE" {
+		if before.Status != "AVAILABLE" || after.Status != "AVAILABLE" || before.Value == nil || after.Value == nil || result.AbsoluteDelta == nil || (result.Metric != baseline.ErrorRate && result.Metric != baseline.RequestCount && result.RelativeDelta == nil) || result.Contamination.Truncated || len(result.Contamination.BeforeDeployments) != 0 || len(result.Contamination.AfterDeployments) != 0 || len(result.Contamination.ConcurrentDeployments) != 0 || !sameFloat(*result.AbsoluteDelta, *after.Value-*before.Value) || (result.RelativeDelta != nil && *before.Value != 0 && !sameFloat(*result.RelativeDelta, *result.AbsoluteDelta / *before.Value)) {
+			return regression.Result{}, errors.New("inconsistent available comparison")
+		}
+	}
+	return result, nil
+}
+
+func sideFromDocument(value sideDocument, algorithm string) (regression.Side, error) {
+	if !availableStatus(value.Status) || value.AlgorithmVersion != algorithm || value.SampleCount < 0 || !finiteDomain(value.Value, math.Inf(-1), math.Inf(1)) || !finiteDomain(value.CoverageRatio, 0, 1) {
+		return regression.Side{}, errors.New("invalid comparison side")
+	}
+	start, end, err := parseWindow(value.Window)
+	if err != nil {
+		return regression.Side{}, err
+	}
+	accepted := make([]baseline.WindowSummary, 0, len(value.AcceptedWindows))
+	for _, window := range value.AcceptedWindows {
+		windowStart, windowEnd, err := parseWindow(windowDocument{Start: window.Start, End: window.End})
+		if err != nil || window.ID == "" || window.SampleCount < 0 || windowStart.Before(start) || windowEnd.After(end) {
+			return regression.Side{}, errors.New("invalid accepted window")
+		}
+		accepted = append(accepted, baseline.WindowSummary{ID: window.ID, Start: windowStart, End: windowEnd, SampleCount: window.SampleCount})
+	}
+	rejected := make([]baseline.RejectedWindow, 0, len(value.RejectedWindows))
+	for _, window := range value.RejectedWindows {
+		windowStart, windowEnd, err := parseWindow(windowDocument{Start: window.Start, End: window.End})
+		observed, observedErr := parseTimestamp(window.ObservedAt)
+		if err != nil || observedErr != nil || window.ID == "" || window.SampleCount < 0 || !finiteDomain(window.CoverageRatio, 0, 1) || !validRejectedReason(window.Reason) || windowStart.Before(start) || windowEnd.After(end) {
+			return regression.Side{}, errors.New("invalid rejected window")
+		}
+		rejected = append(rejected, baseline.RejectedWindow{ID: window.ID, Start: windowStart, End: windowEnd, ObservedAt: observed, SampleCount: window.SampleCount, CoverageRatio: floatCopy(window.CoverageRatio), IsComplete: window.IsComplete, Contaminated: window.Contaminated, Reason: baseline.RejectionReason(window.Reason)})
+	}
+	return regression.Side{Status: value.Status, AlgorithmVersion: value.AlgorithmVersion, WindowStart: start, WindowEnd: end, Value: floatCopy(value.Value), SampleCount: value.SampleCount, CoverageRatio: floatCopy(value.CoverageRatio), IsComplete: value.IsComplete, AcceptedWindows: accepted, RejectedWindows: rejected}, nil
+}
+
+func validMetricUnit(metric, unit string) bool {
+	return (metric == string(baseline.RequestCount) && unit == "requests") || (metric == string(baseline.ErrorRate) && unit == "ratio") || ((metric == string(baseline.LatencyP50) || metric == string(baseline.LatencyP95) || metric == string(baseline.LatencyP99)) && unit == "nanoseconds")
+}
+
+func validComparisonKey(value string) bool {
+	return validInvestigationKey(value) && strings.Trim(value[7:], "0") != ""
+}
+
+func validConfidence(value confidenceDocument, algorithm string) bool {
+	return (value.Level == "LOW" || value.Level == "UNKNOWN") && value.Basis != "" && value.AlgorithmVersion == algorithm && value.Limitations != nil
+}
+
+func confidenceToDomain(value confidenceDocument) regression.Confidence {
+	return regression.Confidence{Level: value.Level, Basis: value.Basis, AlgorithmVersion: value.AlgorithmVersion, Limitations: stringsCopy(value.Limitations)}
+}
+
+func validRejectedReason(value string) bool {
+	switch baseline.RejectionReason(value) {
+	case baseline.AmbiguousExactWindow, baseline.ContaminatedByDeployment, baseline.InsufficientSamples, baseline.InsufficientCoverage, baseline.FutureEvidence, baseline.InvalidWindow, baseline.MetricUnavailable:
+		return true
+	}
+	return false
+}
+
+func validIDs(values []string) bool {
+	if values == nil || !slices.IsSorted(values) {
+		return false
+	}
+	return !slices.Contains(values, "") && len(slices.Compact(slices.Clone(values))) == len(values)
+}
+
+func sameFloat(left, right float64) bool {
+	return math.Abs(left-right) <= math.Max(math.Abs(left), math.Abs(right))*1e-12+1e-15
+}
+
+func classificationDocumentFrom(value regression.Classification) classificationDocument {
+	algorithm, _, _ := strings.Cut(value.AlgorithmVersion, "/")
+	return classificationDocument{ClassificationKey: value.ClassificationKey, Result: value.Result, Direction: value.Direction, Algorithm: algorithm, AlgorithmVersion: value.AlgorithmVersion, Thresholds: thresholdsDocument{AbsoluteMin: floatCopy(value.Thresholds.AbsoluteMin), RelativeMin: floatCopy(value.Thresholds.RelativeMin), RequireAll: value.Thresholds.RequireAll, Unit: value.Thresholds.Unit}, ObservedEffect: effectDocument{AbsoluteDelta: floatCopy(value.ObservedEffect.AbsoluteDelta), RelativeDelta: floatCopy(value.ObservedEffect.RelativeDelta)}, Confidence: confidenceFrom(value.Confidence), CausalityClaimed: false}
+}
+
+func sameClassification(left, right classificationDocument) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftJSON, rightJSON)
+}
+
+func validateTopology(value topologyDocument, deployment deploymentDocument, deploymentAt time.Time) error {
+	at, err := parseTimestamp(value.At)
+	if err != nil || !at.Equal(deploymentAt) || value.Environment != deployment.Environment || !validIDs(value.Roots) {
+		return errors.New("invalid topology")
+	}
+	nodes := make(map[string]struct{}, len(value.Nodes))
+	for _, node := range value.Nodes {
+		if node.ID == "" || node.Type == "" || node.LogicalKey == "" || node.DisplayName == "" {
+			return errors.New("invalid topology node")
+		}
+		if _, exists := nodes[node.ID]; exists {
+			return errors.New("duplicate topology node")
+		}
+		nodes[node.ID] = struct{}{}
+	}
+	for _, root := range value.Roots {
+		if _, exists := nodes[root]; !exists {
+			return errors.New("orphan topology root")
+		}
+	}
+	edges := make(map[string]struct{}, len(value.Edges))
+	for _, edge := range value.Edges {
+		start, end, err := parseWindow(windowDocument{Start: edge.WindowStart, End: edge.WindowEnd})
+		if err != nil || start.IsZero() || end.IsZero() || edge.ID == "" || edge.RelationType != "OBSERVED" || !validDependencyKind(edge.DependencyKind) || edge.RequestCount < 0 || edge.ErrorCount < 0 || edge.ErrorCount > edge.RequestCount || edge.DurationSumNS < 0 || !validGraphConfidence(edge.Confidence) || edge.Confidence.AlgorithmVersion != topology.AlgorithmVersion || !validIDs(edge.EvidenceIDs) || edge.Limitations == nil {
+			return errors.New("invalid topology edge")
+		}
+		if _, exists := nodes[edge.From]; !exists {
+			return errors.New("orphan topology edge from")
+		}
+		if _, exists := nodes[edge.To]; !exists {
+			return errors.New("orphan topology edge to")
+		}
+		if _, exists := edges[edge.ID]; exists {
+			return errors.New("duplicate topology edge")
+		}
+		edges[edge.ID] = struct{}{}
+	}
+	return nil
+}
+
+func validDependencyKind(value string) bool {
+	switch value {
+	case "service", "database", "queue", "external_api":
+		return true
+	}
+	return false
+}
+
+func validGraphConfidence(value graphConfidenceDocument) bool {
+	return (value.Level == "UNKNOWN" || value.Level == "LOW" || value.Level == "MEDIUM" || value.Level == "HIGH") && value.Basis != ""
+}
+
+func validateTimeline(value timelineDocument, deployment deploymentDocument, comparison regression.Result) error {
+	since, until, err := parseWindow(windowDocument{Start: value.Since, End: value.Until})
+	if err != nil || value.Environment != deployment.Environment || !since.Equal(comparison.Before.WindowStart) || !until.Equal(comparison.After.WindowEnd) {
+		return errors.New("invalid timeline")
+	}
+	ids := make(map[string]struct{}, len(value.Items))
+	previous := timelineEventDocument{}
+	hasPrevious := false
+	for _, event := range value.Items {
+		eventTime, eventErr := parseTimestamp(event.Time)
+		_, sourceErr := parseTimestamp(event.Source.ObservedAt)
+		if eventErr != nil || sourceErr != nil || !eventTime.Before(until) || eventTime.Before(since) || event.ID == "" || event.Environment != deployment.Environment || event.Service != deployment.Service || event.CausalityClaimed || !validTimelineEvent(event) || event.Concurrency.Count < 0 || event.Concurrency.Detected != (event.Concurrency.Count > 1) || event.Limitations == nil {
+			return errors.New("invalid timeline event")
+		}
+		if _, exists := ids[event.ID]; exists {
+			return errors.New("duplicate timeline event")
+		}
+		if hasPrevious && !timelineOrdered(previous, event) {
+			return errors.New("noncanonical timeline ordering")
+		}
+		ids[event.ID] = struct{}{}
+		previous, hasPrevious = event, true
+	}
+	return nil
+}
+
+func timelineOrdered(left, right timelineEventDocument) bool {
+	leftTime, _ := parseTimestamp(left.Time)
+	rightTime, _ := parseTimestamp(right.Time)
+	if leftTime.After(rightTime) {
+		return true
+	}
+	if !leftTime.Equal(rightTime) {
+		return false
+	}
+	leftPriority, rightPriority := timeline.Priority(left.Kind), timeline.Priority(right.Kind)
+	return leftPriority < rightPriority || (leftPriority == rightPriority && left.ID <= right.ID)
+}
+
+func validTimelineEvent(value timelineEventDocument) bool {
+	if !validTimelineKind(value.Kind) || !validTimelineRelation(value.RelationType) || value.Subject.ID == "" || !validSubjectType(value.Subject.Type) || !validSourceKind(value.Source.Kind) || !validTimelineConfidence(value.Confidence) {
+		return false
+	}
+	if value.Deployment != nil {
+		if !strings.HasPrefix(value.Kind, "deployment_") && value.Kind != "rollback_declared" || !validDeploymentPayload(*value.Deployment) {
+			return false
+		}
+	} else if strings.HasPrefix(value.Kind, "deployment_") || value.Kind == "rollback_declared" {
+		return false
+	}
+	if value.Runtime != nil {
+		if value.Kind != "runtime_observed" || value.RelationType != "OBSERVED" || value.Subject.Type != "runtime_instance" || value.Source.Kind != "docker" || value.Runtime.RestartCount < 0 || !validRuntimeState(value.Runtime.State) || !validRuntimeHealth(value.Runtime.Health) {
+			return false
+		}
+	} else if value.Kind == "runtime_observed" {
+		return false
+	}
+	if value.Kind != "runtime_observed" && (value.RelationType != "DECLARED" || value.Subject.Type != "deployment" || value.Source.Kind != "deployment_ledger") {
+		return false
+	}
+	return true
+}
+
+func validTimelineKind(value string) bool {
+	switch value {
+	case "deployment_pending", "deployment_running", "deployment_succeeded", "deployment_failed", "deployment_cancelled", "rollback_declared", "runtime_observed":
+		return true
+	}
+	return false
+}
+
+func validTimelineRelation(value string) bool { return value == "DECLARED" || value == "OBSERVED" }
+func validSubjectType(value string) bool      { return value == "deployment" || value == "runtime_instance" }
+func validSourceKind(value string) bool       { return value == "deployment_ledger" || value == "docker" }
+func validTimelineConfidence(value timelineConfidenceDocument) bool {
+	return (value.Level == "LOW" || value.Level == "MEDIUM" || value.Level == "HIGH" || value.Level == "UNKNOWN") && value.Basis != ""
+}
+func validDeploymentPayload(value timelineDeploymentDocument) bool {
+	if !validTimelineConfidence(value.ProvenanceConfidence) {
+		return false
+	}
+	switch value.Status {
+	case "pending", "running", "succeeded", "failed", "cancelled", "rolled_back", "unknown":
+	default:
+		return false
+	}
+	return value.Strategy == "unknown" && (value.ProvenanceStatus == "MATCHED" || value.ProvenanceStatus == "PARTIAL" || value.ProvenanceStatus == "UNKNOWN" || value.ProvenanceStatus == "CONTRADICTED")
+}
+func validRuntimeState(value string) bool {
+	return value == "running" || value == "exited" || value == "created" || value == "paused" || value == "restarting" || value == "dead"
+}
+func validRuntimeHealth(value string) bool {
+	return value == "none" || value == "starting" || value == "healthy" || value == "unhealthy" || value == ""
+}
+
+func validateEvidenceReferences(value investigationDocument) error {
+	accepted, rejected, evidence, events := []string{}, []string{}, []string{}, []string{}
+	for _, side := range []sideDocument{value.Regression.Before, value.Regression.After} {
+		for _, window := range side.AcceptedWindows {
+			accepted = append(accepted, window.ID)
+		}
+		for _, window := range side.RejectedWindows {
+			rejected = append(rejected, window.ID)
+		}
+	}
+	for _, edge := range value.Topology.Edges {
+		evidence = append(evidence, edge.EvidenceIDs...)
+	}
+	for _, event := range value.Timeline.Items {
+		events = append(events, event.ID)
+	}
+	if !sameIDs(value.EvidenceReferences.AcceptedWindowIDs, accepted) || !sameIDs(value.EvidenceReferences.RejectedWindowIDs, rejected) || !sameIDs(value.EvidenceReferences.GraphEvidenceIDs, evidence) || !sameIDs(value.EvidenceReferences.TimelineEventIDs, events) {
+		return errors.New("inconsistent evidence references")
+	}
+	return nil
+}
+
+func sameIDs(actual, values []string) bool {
+	if !validIDs(actual) {
+		return false
+	}
+	values = slices.Clone(values)
+	slices.Sort(values)
+	values = slices.Compact(values)
+	if values == nil {
+		values = []string{}
+	}
+	return slices.Equal(actual, values)
+}
+
+func investigationFromDocument(value investigationDocument, comparison regression.Result, deploymentAt time.Time) (investigation.Result, error) {
+	topologyAt, _ := parseTimestamp(value.Topology.At)
+	graph := topology.Result{At: topologyAt, Environment: value.Topology.Environment, Roots: stringsCopy(value.Topology.Roots), Nodes: make([]topology.Node, 0, len(value.Topology.Nodes)), Edges: make([]topology.Edge, 0, len(value.Topology.Edges)), Truncated: value.Topology.Truncated}
+	for _, node := range value.Topology.Nodes {
+		graph.Nodes = append(graph.Nodes, topology.Node{ID: node.ID, Type: node.Type, LogicalKey: node.LogicalKey, DisplayName: node.DisplayName})
+	}
+	for _, edge := range value.Topology.Edges {
+		start, end, _ := parseWindow(windowDocument{Start: edge.WindowStart, End: edge.WindowEnd})
+		graph.Edges = append(graph.Edges, topology.Edge{ID: edge.ID, From: edge.From, To: edge.To, DependencyKind: edge.DependencyKind, WindowStart: start, WindowEnd: end, RequestCount: edge.RequestCount, ErrorCount: edge.ErrorCount, DurationSumNS: edge.DurationSumNS, Confidence: topology.Confidence(edge.Confidence.Level), Basis: edge.Confidence.Basis, AlgorithmVersion: edge.Confidence.AlgorithmVersion, EvidenceIDs: stringsCopy(edge.EvidenceIDs), Limitations: stringsCopy(edge.Limitations)})
+	}
+	since, _ := parseTimestamp(value.Timeline.Since)
+	until, _ := parseTimestamp(value.Timeline.Until)
+	timelineResult := timeline.Result{Since: since, Until: until, Environment: value.Timeline.Environment, Items: make([]timeline.Event, 0, len(value.Timeline.Items))}
+	for _, event := range value.Timeline.Items {
+		timeValue, _ := parseTimestamp(event.Time)
+		observed, _ := parseTimestamp(event.Source.ObservedAt)
+		item := timeline.Event{ID: event.ID, Time: timeValue, Kind: event.Kind, Environment: event.Environment, Service: event.Service, RelationType: event.RelationType, Subject: timeline.Subject{Type: event.Subject.Type, ID: event.Subject.ID}, Source: timeline.Source{Kind: event.Source.Kind, ObservedAt: observed}, Confidence: timeline.Confidence{Level: event.Confidence.Level, Basis: event.Confidence.Basis}, Concurrency: timeline.Concurrency{Detected: event.Concurrency.Detected, Count: event.Concurrency.Count}, Limitations: stringsCopy(event.Limitations)}
+		if event.Deployment != nil {
+			item.Deployment = &timeline.Deployment{Status: event.Deployment.Status, Strategy: event.Deployment.Strategy, ProvenanceStatus: event.Deployment.ProvenanceStatus, ProvenanceConfidence: timeline.Confidence{Level: event.Deployment.ProvenanceConfidence.Level, Basis: event.Deployment.ProvenanceConfidence.Basis}}
+		}
+		if event.Runtime != nil {
+			item.Runtime = &timeline.Runtime{State: event.Runtime.State, Health: event.Runtime.Health, RestartCount: event.Runtime.RestartCount}
+		}
+		timelineResult.Items = append(timelineResult.Items, item)
+	}
+	if slices.Contains(value.Limitations, investigation.TimelineLimitedLimitation) {
+		timelineResult.NextCursor = "limited"
+	}
+	return investigation.Result{InvestigationVersion: value.InvestigationVersion, Status: value.Status, Deployment: regression.Deployment{ID: value.Deployment.ID, Environment: value.Deployment.Environment, Service: value.Deployment.Service, StartedAt: deploymentAt}, Regression: withClassification(comparison, *value.Regression.Classification), Topology: graph, Timeline: timelineResult, EvidenceReferences: investigation.EvidenceReferences{AcceptedWindowIDs: stringsCopy(value.EvidenceReferences.AcceptedWindowIDs), RejectedWindowIDs: stringsCopy(value.EvidenceReferences.RejectedWindowIDs), GraphEvidenceIDs: stringsCopy(value.EvidenceReferences.GraphEvidenceIDs), TimelineEventIDs: stringsCopy(value.EvidenceReferences.TimelineEventIDs)}, Limitations: stringsCopy(value.Limitations)}, nil
+}
+
+func withClassification(value regression.Result, document classificationDocument) regression.Result {
+	value.Classification = &regression.Classification{ClassificationKey: document.ClassificationKey, Result: document.Result, Direction: document.Direction, AlgorithmVersion: document.AlgorithmVersion, Thresholds: regression.Thresholds{AbsoluteMin: floatCopy(document.Thresholds.AbsoluteMin), RelativeMin: floatCopy(document.Thresholds.RelativeMin), RequireAll: document.Thresholds.RequireAll, Unit: document.Thresholds.Unit}, ObservedEffect: regression.Effect{AbsoluteDelta: floatCopy(document.ObservedEffect.AbsoluteDelta), RelativeDelta: floatCopy(document.ObservedEffect.RelativeDelta)}, Confidence: confidenceToDomain(document.Confidence)}
+	return value
 }
 
 func timestamp(value time.Time) string { return value.UTC().Format(time.RFC3339Nano) }

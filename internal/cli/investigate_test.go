@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/guijoazeiro/prodmap/internal/baseline"
+	"github.com/guijoazeiro/prodmap/internal/investigation"
+	"github.com/guijoazeiro/prodmap/internal/regression"
+	prodmapsqlite "github.com/guijoazeiro/prodmap/internal/sqlite"
 	"github.com/guijoazeiro/prodmap/internal/timeline"
 )
 
@@ -26,6 +30,41 @@ func TestInvestigateHelpAndInvalidArgumentsDoNotOpenInventory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(project, ".prodmap")); !os.IsNotExist(err) {
 		t.Fatalf("invalid arguments opened inventory: %v", err)
+	}
+}
+
+func TestInvestigateReadOnlyOpenDoesNotCreateAbsentInventory(t *testing.T) {
+	project := t.TempDir()
+	app, _, _ := testApp(project)
+	args := []string{"investigate", "--deployment", "018f0000-0000-7000-8000-000000000000", "--metric", "latency_p95", "--project-dir", project}
+	if code := app.Run(t.Context(), args); code == 0 {
+		t.Fatal("investigate opened an absent inventory")
+	}
+	if _, err := os.Stat(filepath.Join(project, ".prodmap")); !os.IsNotExist(err) {
+		t.Fatalf("investigate created absent inventory: %v", err)
+	}
+}
+
+func TestComposeInvestigationSnapshotClosesAfterComposeError(t *testing.T) {
+	project := t.TempDir()
+	_, deployedAt := seedRegressionCLIDataWithMetrics(t, project, regressionCLIMetrics{requests: 20, p50NS: 250_000_000, p95NS: 250_000_000, p99NS: 250_000_000}, regressionCLIMetrics{requests: 20, p50NS: 250_000_000, p95NS: 250_000_000, p99NS: 250_000_000})
+	store, err := prodmapsqlite.OpenReadOnly(t.Context(), filepath.Join(project, ".prodmap", "prodmap.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	query := investigation.Query{Comparison: regression.Query{DeploymentID: "018f0000-0000-7000-8000-000000000000", Metric: baseline.LatencyP95, Before: 5 * time.Minute, After: 5 * time.Minute, MinSamples: 1, MinCoverage: 0.8}, GeneratedAt: deployedAt.Add(time.Hour)}
+	if _, err := composeInvestigationSnapshot(t.Context(), store, query); err == nil {
+		t.Fatal("composeInvestigationSnapshot succeeded with missing deployment")
+	}
+	// The Store has one pooled connection; this succeeds only if cleanup closed
+	// the failed composition snapshot before the caller returned.
+	snapshot, err := store.BeginReadSnapshot(t.Context())
+	if err != nil {
+		t.Fatalf("failed composition leaked its snapshot: %v", err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

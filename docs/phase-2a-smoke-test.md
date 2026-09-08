@@ -17,7 +17,11 @@ For fish, use `set SMOKE_DIR (mktemp -d)`. Re-run the ingest and verify the same
 For a real Collector smoke test, follow [`deploy/otel-collector/README.md`](../deploy/otel-collector/README.md), stop the Collector to freeze the JSONL file, then ingest it. The opt-in automated check is:
 
 ```bash
-PRODMAP_TEST_REAL_OTEL=1 go test ./internal/cli -run TestRealOTelCollector -count=1 -v
+make test-integration
 ```
+
+It also exercises the Docker runtime source with its own temporary container.
+Docker and Compose are required only for this opt-in target; it does not use the
+reference application.
 
 Do not interpret this smoke test as execution of Experiment 001 or a Phase 2 `go` decision.

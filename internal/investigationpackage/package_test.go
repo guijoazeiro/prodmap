@@ -200,11 +200,52 @@ func TestCreateRejectsRedactionViolationWithoutWritingPackage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "unsafe.zip")
 	unsafe := validInvestigation(now)
 	unsafe.Limitations = []string{"Bearer secret-value"}
-	if _, err := Create(t.Context(), CreateRequest{OutputPath: path, CreatedAt: now, Investigation: unsafe}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := Create(t.Context(), CreateRequest{OutputPath: path, CreatedAt: now, Investigation: unsafe}); !errors.Is(err, errs.ErrInvalid) || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("Create error=%v", err)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unsafe package was written: %v", err)
+	}
+}
+
+func TestPackageAcceptsAuthenticationCapabilityNamesAndRejectsCredentials(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	result := validInvestigation(now)
+	result.Deployment.Service = "token-service"
+	result.Regression.Deployment.Service = "token-service"
+	result.Topology.Roots = []string{"service-payment"}
+	result.Topology.Nodes = []topology.Node{
+		{ID: "service-payment", Type: "service", LogicalKey: "payment-api", DisplayName: "payment-api"},
+		{ID: "service-token", Type: "service", LogicalKey: "token-service", DisplayName: "token-service"},
+	}
+	result.Topology.Edges = []topology.Edge{{ID: "edge-token", From: "service-payment", To: "service-token", DependencyKind: "service", WindowStart: result.Timeline.Since, WindowEnd: result.Deployment.StartedAt, RequestCount: 1, Confidence: topology.Low, Basis: "observed relation", AlgorithmVersion: topology.AlgorithmVersion, EvidenceIDs: []string{"evidence-token"}, Limitations: []string{}}}
+	result.EvidenceReferences.GraphEvidenceIDs = []string{"evidence-token"}
+	calculated, err := investigation.CalculateKey(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.InvestigationKey = calculated
+	output, err := OutputFrom(result)
+	if err != nil {
+		t.Fatalf("OutputFrom() error = %v", err)
+	}
+	if output.Deployment.Service != "token-service" || output.Topology.Nodes[1].LogicalKey != "token-service" {
+		t.Fatalf("output=%+v", output)
+	}
+	path := filepath.Join(t.TempDir(), "token-service.zip")
+	created, err := Create(t.Context(), CreateRequest{OutputPath: path, CreatedAt: now, Investigation: result})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	verified, err := Verify(t.Context(), path)
+	if err != nil || verified.InvestigationKey != created.InvestigationKey {
+		t.Fatalf("Verify() result=%+v error=%v", verified, err)
+	}
+
+	unsafe := result
+	unsafe.Limitations = []string{"token=fake-sensitive-value"}
+	if _, err := OutputFrom(unsafe); !errors.Is(err, errs.ErrInvalid) || strings.Contains(err.Error(), "fake-sensitive-value") {
+		t.Fatalf("OutputFrom sensitive error=%v", err)
 	}
 }
 
@@ -218,6 +259,132 @@ func TestVerifyRequiresRegularInputFile(t *testing.T) {
 	}
 	if _, err := Verify(t.Context(), path); !errors.Is(err, errs.ErrInvalid) {
 		t.Fatalf("symlink Verify error=%v", err)
+	}
+}
+
+func TestVerifyRejectsDuplicateJSONKeysBeforeTypedDecoding(t *testing.T) {
+	for name, document := range map[string][]byte{
+		"root":             []byte(`{"name":"a","name":"b"}`),
+		"nested":           []byte(`{"regression":{"status":"a","status":"b"}}`),
+		"array object":     []byte(`{"items":[{"id":"a","id":"b"}]}`),
+		"escaped spelling": []byte(`{"name":"a","\u006eame":"b"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var value any
+			if err := decodeStrict(document, &value); err == nil {
+				t.Fatal("duplicate key was accepted")
+			}
+		})
+	}
+	var value any
+	if err := decodeStrict([]byte(`{"left":{"name":"a"},"right":{"name":"b"}}`), &value); err != nil {
+		t.Fatalf("same key in different objects rejected: %v", err)
+	}
+}
+
+func TestVerifyRejectsSemanticMutationsWithRefreshedIntegrity(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	for name, mutate := range map[string]func(*investigationDocument){
+		"unknown investigation version": func(value *investigationDocument) { value.InvestigationVersion = "investigation-view/v999" },
+		"unknown comparison version":    func(value *investigationDocument) { value.Regression.AlgorithmVersion = "deployment-comparison/v999" },
+		"confirmed classification":      func(value *investigationDocument) { value.Regression.Classification.Result = "CONFIRMED" },
+		"raised confidence":             func(value *investigationDocument) { value.Regression.Classification.Confidence.Level = "HIGH" },
+		"inconsistent delta": func(value *investigationDocument) {
+			changed := *value.Regression.AbsoluteDelta + 1
+			value.Regression.AbsoluteDelta = &changed
+		},
+		"orphan reference":        func(value *investigationDocument) { value.EvidenceReferences.TimelineEventIDs = []string{"invented"} },
+		"stale investigation key": func(value *investigationDocument) { value.InvestigationKey = "sha256:" + strings.Repeat("b", 64) },
+		"causality": func(value *investigationDocument) {
+			value.Timeline.Items = append(value.Timeline.Items, timelineEventDocument{ID: "event", Time: value.Timeline.Since, Kind: "runtime_observed", Environment: value.Deployment.Environment, Service: value.Deployment.Service, RelationType: "OBSERVED", Subject: subjectDocument{Type: "runtime_instance", ID: "runtime"}, Source: sourceDocument{Kind: "docker", ObservedAt: value.Timeline.Since}, Confidence: timelineConfidenceDocument{Level: "LOW", Basis: "observed"}, Runtime: &runtimeDocument{State: "running", Health: "healthy"}, Concurrency: concurrencyDocument{}, Limitations: []string{}, CausalityClaimed: true})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := validFiles(t, now)
+			var document investigationDocument
+			if err := json.Unmarshal(files["investigation.json"], &document); err != nil {
+				t.Fatal(err)
+			}
+			mutate(&document)
+			encoded, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files["investigation.json"] = encoded
+			refreshManifestAndChecksums(t, files)
+			path := filepath.Join(t.TempDir(), "mutated.zip")
+			writeZIP(t, path, entriesFrom(files))
+			if _, err := Verify(t.Context(), path); !errors.Is(err, errs.ErrInvalid) {
+				t.Fatalf("Verify error=%v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyRejectsDuplicateKeysEvenWithRefreshedIntegrity(t *testing.T) {
+	files := validFiles(t, time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
+	files["investigation.json"] = bytes.Replace(files["investigation.json"], []byte(`"status":"AVAILABLE"`), []byte(`"status":"AVAILABLE","status":"AVAILABLE"`), 1)
+	refreshManifestAndChecksums(t, files)
+	path := filepath.Join(t.TempDir(), "duplicate-key.zip")
+	writeZIP(t, path, entriesFrom(files))
+	if _, err := Verify(t.Context(), path); !errors.Is(err, errs.ErrInvalid) {
+		t.Fatalf("Verify error=%v", err)
+	}
+}
+
+func TestVerifyRejectsDuplicateManifestKeys(t *testing.T) {
+	files := validFiles(t, time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
+	// Insert an equivalent duplicate after the original field while retaining a
+	// structurally valid ZIP and refreshed external hashes.
+	files["manifest.json"] = bytes.Replace(files["manifest.json"], []byte(`","created_at"`), []byte(`","format_version":"prodmap-investigation-package/v1","created_at"`), 1)
+	refreshChecksums(t, files)
+	path := filepath.Join(t.TempDir(), "duplicate-manifest-key.zip")
+	writeZIP(t, path, entriesFrom(files))
+	if _, err := Verify(t.Context(), path); !errors.Is(err, errs.ErrInvalid) {
+		t.Fatalf("Verify error=%v", err)
+	}
+}
+
+func TestCreateAndVerifyAcceptsConservativeClassificationVariants(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	for name, mutate := range map[string]func(*investigation.Result){
+		"candidate": func(*investigation.Result) {},
+		"no signal": func(value *investigation.Result) {
+			after := 299_000_000.0
+			delta := after - *value.Regression.Before.Value
+			relative := delta / *value.Regression.Before.Value
+			value.Regression.After.Value, value.Regression.AbsoluteDelta, value.Regression.RelativeDelta = &after, &delta, &relative
+		},
+		"unknown": func(value *investigation.Result) {
+			value.Status, value.Regression.Status = "UNKNOWN", "UNKNOWN"
+			value.Regression.Before.Status, value.Regression.Before.Value = "UNKNOWN", nil
+			value.Regression.AbsoluteDelta, value.Regression.RelativeDelta = nil, nil
+			value.Regression.BaselineConfidence = regression.Confidence{Level: "UNKNOWN", Basis: "no exact baseline window", AlgorithmVersion: baseline.AlgorithmVersion, Limitations: []string{"no exact baseline window"}}
+			value.Regression.RegressionConfidence = regression.Confidence{Level: "UNKNOWN", Basis: "comparison requires eligible exact baseline and observation windows without known contamination or concurrency", AlgorithmVersion: regression.AlgorithmVersion, Limitations: []string{"comparison requires eligible exact baseline and observation windows without known contamination or concurrency"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := validInvestigation(now)
+			mutate(&result)
+			result.Regression.Classification = nil
+			classification, err := regression.Classify(t.Context(), result.Regression)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Regression.Classification = &classification
+			key, err := investigation.CalculateKey(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.InvestigationKey = key
+			path := filepath.Join(t.TempDir(), "variant.zip")
+			if _, err := Create(t.Context(), CreateRequest{OutputPath: path, CreatedAt: now, Investigation: result}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Verify(t.Context(), path); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -271,7 +438,7 @@ func validFiles(t *testing.T, now time.Time) map[string][]byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifestJSON, err := json.Marshal(manifest{FormatVersion: FormatVersion, CreatedAt: now.Format(time.RFC3339Nano), InvestigationVersion: investigation.Version, InvestigationKey: "sha256:" + strings.Repeat("a", 64), RedactionProfile: RedactionProfile, Investigation: fileInventory{Name: "investigation.json", SHA256: digest(documentJSON), Size: int64(len(documentJSON)), MediaType: MediaType}})
+	manifestJSON, err := json.Marshal(manifest{FormatVersion: FormatVersion, CreatedAt: now.Format(time.RFC3339Nano), InvestigationVersion: investigation.Version, InvestigationKey: validInvestigation(now).InvestigationKey, RedactionProfile: RedactionProfile, Investigation: fileInventory{Name: "investigation.json", SHA256: digest(documentJSON), Size: int64(len(documentJSON)), MediaType: MediaType}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,11 +492,27 @@ func refreshManifestAndChecksums(t *testing.T, files map[string][]byte) {
 
 func validInvestigation(now time.Time) investigation.Result {
 	key := "sha256:" + strings.Repeat("a", 64)
-	absolute := 50_000_000.0
+	beforeValue := 250_000_000.0
+	afterValue := 300_000_000.0
+	absolute := afterValue - beforeValue
 	relative := 0.20
-	confidence := regression.Confidence{Level: "LOW", Basis: "bounded evidence", AlgorithmVersion: regression.AlgorithmVersion, Limitations: []string{}}
-	classification := regression.Classification{ClassificationKey: key, Result: "CANDIDATE", Direction: "INCREASE", AlgorithmVersion: regression.ClassificationAlgorithmVersion, Thresholds: regression.Thresholds{AbsoluteMin: &absolute, RelativeMin: &relative, RequireAll: true, Unit: "nanoseconds"}, ObservedEffect: regression.Effect{AbsoluteDelta: &absolute, RelativeDelta: &relative}, Confidence: confidence}
-	side := regression.Side{Status: "AVAILABLE", AlgorithmVersion: regression.AlgorithmVersion, WindowStart: now.Add(-10 * time.Minute), WindowEnd: now.Add(-5 * time.Minute), Value: &absolute, SampleCount: 10, IsComplete: true, AcceptedWindows: []baseline.WindowSummary{}, RejectedWindows: []baseline.RejectedWindow{}}
+	baselineConfidence := regression.Confidence{Level: "LOW", Basis: "single exact baseline window; experimental algorithm caps confidence at LOW", AlgorithmVersion: baseline.AlgorithmVersion, Limitations: []string{}}
+	observationConfidence := regression.Confidence{Level: "LOW", Basis: "single exact post-deployment observation window; experimental algorithm caps confidence at LOW", AlgorithmVersion: regression.ObservationAlgorithmVersion, Limitations: []string{}}
+	regressionConfidence := regression.Confidence{Level: "LOW", Basis: "two exact windows are mechanically comparable; experimental algorithm caps confidence at LOW", AlgorithmVersion: regression.AlgorithmVersion, Limitations: []string{}}
 	deployment := regression.Deployment{ID: "01a05d48-09b3-742b-8d9b-54f79d43b28f", Environment: "reference", Service: "payment-api", StartedAt: now.Add(-5 * time.Minute)}
-	return investigation.Result{InvestigationVersion: investigation.Version, InvestigationKey: key, Status: "AVAILABLE", Deployment: deployment, Regression: regression.Result{ComparisonKey: key, Status: "AVAILABLE", AlgorithmVersion: regression.AlgorithmVersion, Deployment: deployment, Metric: baseline.LatencyP95, Unit: "nanoseconds", Before: side, After: side, AbsoluteDelta: &absolute, RelativeDelta: &relative, Contamination: regression.Contamination{BeforeDeployments: []string{}, AfterDeployments: []string{}, ConcurrentDeployments: []string{}}, BaselineConfidence: confidence, ObservationConfidence: confidence, RegressionConfidence: confidence, Classification: &classification}, Topology: topology.Result{At: now, Environment: "reference", Roots: []string{}, Nodes: []topology.Node{}, Edges: []topology.Edge{}}, Timeline: timeline.Result{Since: now.Add(-10 * time.Minute), Until: now, Environment: "reference", Items: []timeline.Event{}}, EvidenceReferences: investigation.EvidenceReferences{AcceptedWindowIDs: []string{}, RejectedWindowIDs: []string{}, GraphEvidenceIDs: []string{}, TimelineEventIDs: []string{}}, Limitations: []string{}, CausalityClaimed: false}
+	before := regression.Side{Status: "AVAILABLE", AlgorithmVersion: baseline.AlgorithmVersion, WindowStart: now.Add(-10 * time.Minute), WindowEnd: deployment.StartedAt, Value: &beforeValue, SampleCount: 10, IsComplete: true, AcceptedWindows: []baseline.WindowSummary{}, RejectedWindows: []baseline.RejectedWindow{}}
+	after := regression.Side{Status: "AVAILABLE", AlgorithmVersion: regression.ObservationAlgorithmVersion, WindowStart: deployment.StartedAt, WindowEnd: now, Value: &afterValue, SampleCount: 10, IsComplete: true, AcceptedWindows: []baseline.WindowSummary{}, RejectedWindows: []baseline.RejectedWindow{}}
+	comparison := regression.Result{ComparisonKey: key, Status: "AVAILABLE", AlgorithmVersion: regression.AlgorithmVersion, Deployment: deployment, Metric: baseline.LatencyP95, Unit: "nanoseconds", Before: before, After: after, AbsoluteDelta: &absolute, RelativeDelta: &relative, Contamination: regression.Contamination{BeforeDeployments: []string{}, AfterDeployments: []string{}, ConcurrentDeployments: []string{}}, BaselineConfidence: baselineConfidence, ObservationConfidence: observationConfidence, RegressionConfidence: regressionConfidence}
+	classification, err := regression.Classify(context.Background(), comparison)
+	if err != nil {
+		panic(err)
+	}
+	comparison.Classification = &classification
+	result := investigation.Result{InvestigationVersion: investigation.Version, Status: "AVAILABLE", Deployment: deployment, Regression: comparison, Topology: topology.Result{At: deployment.StartedAt, Environment: "reference", Roots: []string{}, Nodes: []topology.Node{}, Edges: []topology.Edge{}}, Timeline: timeline.Result{Since: now.Add(-10 * time.Minute), Until: now, Environment: "reference", Items: []timeline.Event{}}, EvidenceReferences: investigation.EvidenceReferences{AcceptedWindowIDs: []string{}, RejectedWindowIDs: []string{}, GraphEvidenceIDs: []string{}, TimelineEventIDs: []string{}}, Limitations: []string{}, CausalityClaimed: false}
+	calculated, err := investigation.CalculateKey(result)
+	if err != nil {
+		panic(err)
+	}
+	result.InvestigationKey = calculated
+	return result
 }

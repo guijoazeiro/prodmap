@@ -105,6 +105,22 @@ func TestPackageHelpInvalidArgumentsAndVerifyDoNotOpenInventory(t *testing.T) {
 	}
 }
 
+func TestPackageCreateReadOnlyOpenDoesNotCreateAbsentInventory(t *testing.T) {
+	project := t.TempDir()
+	app, _, _ := testApp(project)
+	output := filepath.Join(t.TempDir(), "investigation.zip")
+	args := []string{"package", "create", "--deployment", "018f0000-0000-7000-8000-000000000000", "--metric", "latency_p95", "--output", output, "--project-dir", project}
+	if code := app.Run(t.Context(), args); code == 0 {
+		t.Fatal("package create opened an absent inventory")
+	}
+	if _, err := os.Stat(filepath.Join(project, ".prodmap")); !os.IsNotExist(err) {
+		t.Fatalf("package create created absent inventory: %v", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("package create wrote output after inventory open failed: %v", err)
+	}
+}
+
 func assertPackageContentsAreRedacted(t *testing.T, path string) {
 	t.Helper()
 	archive, err := zip.OpenReader(path)

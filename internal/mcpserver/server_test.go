@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -144,6 +145,28 @@ func TestServerUnknownAndNoSignalRemainConservative(t *testing.T) {
 	}
 }
 
+func TestServerAllowsAuthenticationCapabilityServiceNames(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	reader := fixtureReader{
+		input: fixtureInput(now),
+		roots: []topology.Node{{ID: "service-payment", Type: "service", LogicalKey: "payment-api", DisplayName: "payment-api"}},
+		nodes: []topology.Node{
+			{ID: "service-payment", Type: "service", LogicalKey: "payment-api", DisplayName: "payment-api"},
+			{ID: "service-token", Type: "service", LogicalKey: "token-service", DisplayName: "token-service"},
+		},
+		edges: []topology.Edge{{ID: "edge-token", From: "service-payment", To: "service-token", DependencyKind: "service", EvidenceIDs: []string{"evidence-token"}, Limitations: []string{}}},
+	}
+	session := connect(t, reader, func() time.Time { return now })
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: ToolName, Arguments: validArguments()})
+	if err != nil || result.IsError {
+		t.Fatalf("tool result=%+v err=%v", result, err)
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil || !strings.Contains(string(encoded), "token-service") || strings.Contains(string(encoded), "fake-sensitive-value") {
+		t.Fatalf("structured output=%s err=%v", encoded, err)
+	}
+}
+
 func TestServerMapsNotFoundAndCancellationWithoutDetails(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	reader := fixtureReader{input: fixtureInput(now), comparisonErr: errs.ErrNotFound}
@@ -154,15 +177,80 @@ func TestServerMapsNotFoundAndCancellationWithoutDetails(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, _, err = handle(ctx, Config{Reader: fixtureReader{input: fixtureInput(now)}, Now: func() time.Time { return now }}, Input{Deployment: validDeploymentID, Metric: "latency_p95"})
+	_, _, err = handle(ctx, fixtureConfig(fixtureReader{input: fixtureInput(now)}, func() time.Time { return now }), Input{Deployment: validDeploymentID, Metric: "latency_p95"})
 	if err == nil || err.Error() != "SOURCE_UNAVAILABLE" {
 		t.Fatalf("err=%v", err)
 	}
 	deadline, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
 	defer cancel()
-	_, _, err = handle(deadline, Config{Reader: fixtureReader{input: fixtureInput(now), wait: true}, Now: func() time.Time { return now }}, Input{Deployment: validDeploymentID, Metric: "latency_p95"})
+	_, _, err = handle(deadline, fixtureConfig(fixtureReader{input: fixtureInput(now), wait: true}, func() time.Time { return now }), Input{Deployment: validDeploymentID, Metric: "latency_p95"})
 	if err == nil || err.Error() != "SOURCE_UNAVAILABLE" {
 		t.Fatalf("deadline err=%v", err)
+	}
+}
+
+func TestServerCreatesAndClosesOneSnapshotPerToolCall(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	reader := fixtureReader{input: fixtureInput(now)}
+	var mu sync.Mutex
+	opened, closed := 0, 0
+	config := Config{
+		OpenReader: func(context.Context) (Reader, func() error, error) {
+			mu.Lock()
+			opened++
+			mu.Unlock()
+			return reader, func() error {
+				mu.Lock()
+				closed++
+				mu.Unlock()
+				return nil
+			}, nil
+		},
+		Now: func() time.Time { return now },
+	}
+	session := connectConfig(t, config)
+	if _, err := session.ListTools(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if opened != 0 || closed != 0 {
+		mu.Unlock()
+		t.Fatalf("handshake/tools-list opened snapshots: opened=%d closed=%d", opened, closed)
+	}
+	mu.Unlock()
+	for range 2 {
+		result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: ToolName, Arguments: validArguments()})
+		if err != nil || result.IsError {
+			t.Fatalf("tool call result=%+v err=%v", result, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if opened != 2 || closed != 2 {
+		t.Fatalf("snapshots opened=%d closed=%d, want 2 each", opened, closed)
+	}
+}
+
+func TestServerClosesSnapshotAfterComposeErrorAndCancellation(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	for name, ctx := range map[string]context.Context{
+		"compose error": t.Context(),
+		"cancelled":     func() context.Context { value, cancel := context.WithCancel(t.Context()); cancel(); return value }(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			closed := 0
+			reader := fixtureReader{input: fixtureInput(now), comparisonErr: errs.ErrNotFound}
+			config := Config{
+				OpenReader: func(context.Context) (Reader, func() error, error) {
+					return reader, func() error { closed++; return nil }, nil
+				},
+				Now: func() time.Time { return now },
+			}
+			_, _, err := handle(ctx, config, Input{Deployment: validDeploymentID, Metric: "latency_p95"})
+			if err == nil || closed != 1 {
+				t.Fatalf("error=%v closed=%d", err, closed)
+			}
+		})
 	}
 }
 
@@ -170,7 +258,7 @@ func TestServerRejectsOversizeOutputAndConcurrentCalls(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	large := fixtureInput(now)
 	large.Before[0].ID = strings.Repeat("a", maxResponseBytes)
-	_, _, err := handle(t.Context(), Config{Reader: fixtureReader{input: large}, Now: func() time.Time { return now }}, Input{Deployment: validDeploymentID, Metric: "latency_p95"})
+	_, _, err := handle(t.Context(), fixtureConfig(fixtureReader{input: large}, func() time.Time { return now }), Input{Deployment: validDeploymentID, Metric: "latency_p95"})
 	if err == nil || err.Error() != "INCOMPATIBLE_SCHEMA" {
 		t.Fatalf("oversize err=%v", err)
 	}
@@ -220,7 +308,12 @@ func validArguments() map[string]any {
 
 func connect(t *testing.T, reader Reader, now func() time.Time) *mcp.ClientSession {
 	t.Helper()
-	server, err := New(Config{Reader: reader, Now: now})
+	return connectConfig(t, fixtureConfig(reader, now))
+}
+
+func connectConfig(t *testing.T, config Config) *mcp.ClientSession {
+	t.Helper()
+	server, err := New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +330,15 @@ func connect(t *testing.T, reader Reader, now func() time.Time) *mcp.ClientSessi
 	}
 	t.Cleanup(func() { _ = clientSession.Close() })
 	return clientSession
+}
+
+func fixtureConfig(reader Reader, now func() time.Time) Config {
+	return Config{
+		OpenReader: func(context.Context) (Reader, func() error, error) {
+			return reader, func() error { return nil }, nil
+		},
+		Now: now,
+	}
 }
 
 type fixtureReader struct {
@@ -260,14 +362,56 @@ func (r fixtureReader) Comparison(ctx context.Context, query regression.Query) (
 func (r fixtureReader) ResolveGraphRoots(_ context.Context, _, _ string, _ bool) ([]topology.Node, error) {
 	return r.roots, nil
 }
-func (r fixtureReader) ObservedGraph(_ context.Context, _ string, _ time.Time, _ topology.Confidence, _ []string, _ int) ([]topology.Node, []topology.Edge, bool, error) {
-	return r.nodes, r.edges, false, nil
-}
-func (r fixtureReader) Timeline(_ context.Context, _ timeline.Query) (timeline.Result, error) {
-	if r.timeline.Items == nil {
-		return timeline.Result{Items: []timeline.Event{}}, nil
+func (r fixtureReader) ObservedGraph(_ context.Context, _ string, at time.Time, _ topology.Confidence, _ []string, _ int) ([]topology.Node, []topology.Edge, bool, error) {
+	edges := slices.Clone(r.edges)
+	for index := range edges {
+		if edges[index].WindowStart.IsZero() {
+			edges[index].WindowStart = at.Add(-5 * time.Minute)
+			edges[index].WindowEnd = at
+		}
+		if edges[index].Confidence == "" {
+			edges[index].Confidence = topology.Low
+		}
+		if edges[index].Basis == "" {
+			edges[index].Basis = "fixture observed relation"
+		}
+		if edges[index].AlgorithmVersion == "" {
+			edges[index].AlgorithmVersion = topology.AlgorithmVersion
+		}
 	}
-	return r.timeline, nil
+	return r.nodes, edges, false, nil
+}
+func (r fixtureReader) Timeline(_ context.Context, query timeline.Query) (timeline.Result, error) {
+	if r.timeline.Items == nil {
+		return timeline.Result{Since: query.Since, Until: query.Until, Environment: query.Environment, Items: []timeline.Event{}}, nil
+	}
+	result := r.timeline
+	result.Since, result.Until, result.Environment = query.Since, query.Until, query.Environment
+	result.Items = slices.Clone(r.timeline.Items)
+	for index := range result.Items {
+		event := &result.Items[index]
+		if event.Time.Before(query.Since) || !event.Time.Before(query.Until) {
+			event.Time = query.Since
+		}
+		if event.Source.ObservedAt.IsZero() {
+			event.Source.ObservedAt = event.Time
+		}
+		if event.Confidence.Level == "" {
+			event.Confidence = timeline.Confidence{Level: "HIGH", Basis: "fixture source"}
+		}
+		if event.Kind == "runtime_observed" {
+			event.RelationType, event.Subject.Type, event.Source.Kind = "OBSERVED", "runtime_instance", "docker"
+			if event.Runtime == nil {
+				event.Runtime = &timeline.Runtime{State: "running", Health: "healthy"}
+			}
+			continue
+		}
+		event.RelationType, event.Subject.Type, event.Source.Kind = "DECLARED", "deployment", "deployment_ledger"
+		if event.Deployment == nil {
+			event.Deployment = &timeline.Deployment{Status: "running", Strategy: "unknown", ProvenanceStatus: "MATCHED", ProvenanceConfidence: timeline.Confidence{Level: "LOW", Basis: "fixture ledger"}}
+		}
+	}
+	return result, nil
 }
 
 func fixtureInput(now time.Time) regression.Input {

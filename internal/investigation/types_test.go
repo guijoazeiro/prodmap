@@ -123,7 +123,7 @@ func TestInvestigationKeyCapturesCanonicalTopologyAndTimeline(t *testing.T) {
 
 func investigationKey(t *testing.T, result Result) string {
 	t.Helper()
-	value, err := key(result)
+	value, err := CalculateKey(result)
 	if err != nil {
 		t.Fatal(err)
 	}

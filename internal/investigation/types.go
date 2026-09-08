@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	Version       = "investigation-view/v1"
-	graphMaxNodes = 100
+	Version                   = "investigation-view/v1"
+	TimelineLimitedLimitation = "timeline results were limited by the existing page limit"
+	graphMaxNodes             = 100
 )
 
 // Reader is owned by the investigation consumer and implemented by local SQLite.
@@ -110,7 +111,7 @@ func Compose(ctx context.Context, reader Reader, query Query) (Result, error) {
 		Limitations:          limitations,
 		CausalityClaimed:     false,
 	}
-	result.InvestigationKey, err = key(result)
+	result.InvestigationKey, err = CalculateKey(result)
 	if err != nil {
 		return Result{}, fmt.Errorf("encode investigation key: %w", err)
 	}
@@ -191,7 +192,7 @@ func collectLimitations(comparison regression.Result, graph topology.Result, tim
 		limitations = append(limitations, "no timeline events matched the investigation interval")
 	}
 	if timelineResult.NextCursor != "" {
-		limitations = append(limitations, "timeline results were limited by the existing page limit")
+		limitations = append(limitations, TimelineLimitedLimitation)
 	}
 	for _, event := range timelineResult.Items {
 		limitations = append(limitations, event.Limitations...)
@@ -208,7 +209,9 @@ func uniqueSorted(values []string) []string {
 	return slices.Compact(values)
 }
 
-func key(result Result) (string, error) {
+// CalculateKey returns the canonical, reproducible key for the semantic
+// investigation projection. Rendering metadata is deliberately excluded.
+func CalculateKey(result Result) (string, error) {
 	payload, err := json.Marshal(canonicalInvestigationFrom(result))
 	if err != nil {
 		return "", err
