@@ -22,7 +22,9 @@ atômica sem substituição, `fsync` do diretório e permissão final 0600.
 
 `prodmap package verify` é offline: não carrega configuração nem SQLite. Ele
 aceita somente os três arquivos regulares esperados, valida JSON estrito,
-inventário, checksums, versões, chaves, limites e o scanner de redaction.
+inventário, checksums, limites e o scanner de redaction. A validade semântica
+(versões, enums, relações analíticas, referências e chaves reproduzíveis) é
+definida em [ADR-032](032-semantic-investigation-package-validation.md).
 Conteúdo bruto, credenciais, paths absolutos e identidades proibidas são
 recusados.
 

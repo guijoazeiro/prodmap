@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -361,14 +362,56 @@ func (r fixtureReader) Comparison(ctx context.Context, query regression.Query) (
 func (r fixtureReader) ResolveGraphRoots(_ context.Context, _, _ string, _ bool) ([]topology.Node, error) {
 	return r.roots, nil
 }
-func (r fixtureReader) ObservedGraph(_ context.Context, _ string, _ time.Time, _ topology.Confidence, _ []string, _ int) ([]topology.Node, []topology.Edge, bool, error) {
-	return r.nodes, r.edges, false, nil
-}
-func (r fixtureReader) Timeline(_ context.Context, _ timeline.Query) (timeline.Result, error) {
-	if r.timeline.Items == nil {
-		return timeline.Result{Items: []timeline.Event{}}, nil
+func (r fixtureReader) ObservedGraph(_ context.Context, _ string, at time.Time, _ topology.Confidence, _ []string, _ int) ([]topology.Node, []topology.Edge, bool, error) {
+	edges := slices.Clone(r.edges)
+	for index := range edges {
+		if edges[index].WindowStart.IsZero() {
+			edges[index].WindowStart = at.Add(-5 * time.Minute)
+			edges[index].WindowEnd = at
+		}
+		if edges[index].Confidence == "" {
+			edges[index].Confidence = topology.Low
+		}
+		if edges[index].Basis == "" {
+			edges[index].Basis = "fixture observed relation"
+		}
+		if edges[index].AlgorithmVersion == "" {
+			edges[index].AlgorithmVersion = topology.AlgorithmVersion
+		}
 	}
-	return r.timeline, nil
+	return r.nodes, edges, false, nil
+}
+func (r fixtureReader) Timeline(_ context.Context, query timeline.Query) (timeline.Result, error) {
+	if r.timeline.Items == nil {
+		return timeline.Result{Since: query.Since, Until: query.Until, Environment: query.Environment, Items: []timeline.Event{}}, nil
+	}
+	result := r.timeline
+	result.Since, result.Until, result.Environment = query.Since, query.Until, query.Environment
+	result.Items = slices.Clone(r.timeline.Items)
+	for index := range result.Items {
+		event := &result.Items[index]
+		if event.Time.Before(query.Since) || !event.Time.Before(query.Until) {
+			event.Time = query.Since
+		}
+		if event.Source.ObservedAt.IsZero() {
+			event.Source.ObservedAt = event.Time
+		}
+		if event.Confidence.Level == "" {
+			event.Confidence = timeline.Confidence{Level: "HIGH", Basis: "fixture source"}
+		}
+		if event.Kind == "runtime_observed" {
+			event.RelationType, event.Subject.Type, event.Source.Kind = "OBSERVED", "runtime_instance", "docker"
+			if event.Runtime == nil {
+				event.Runtime = &timeline.Runtime{State: "running", Health: "healthy"}
+			}
+			continue
+		}
+		event.RelationType, event.Subject.Type, event.Source.Kind = "DECLARED", "deployment", "deployment_ledger"
+		if event.Deployment == nil {
+			event.Deployment = &timeline.Deployment{Status: "running", Strategy: "unknown", ProvenanceStatus: "MATCHED", ProvenanceConfidence: timeline.Confidence{Level: "LOW", Basis: "fixture ledger"}}
+		}
+	}
+	return result, nil
 }
 
 func fixtureInput(now time.Time) regression.Input {

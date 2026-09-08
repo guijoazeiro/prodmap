@@ -117,7 +117,7 @@ Create a portable package from the same read-only investigation composition, the
 ./bin/prodmap package verify --file investigation.zip --json
 ```
 
-The ZIP contains exactly `manifest.json`, `investigation.json`, and `SHA256SUMS`. Verification checks the closed file inventory, hashes, strict JSON, consistency, size limits, and redaction. This provides integrity checking, not a signature or proof of authorship/authenticity.
+The ZIP contains exactly `manifest.json`, `investigation.json`, and `SHA256SUMS`. Verification checks the closed file inventory, hashes, duplicate-free strict JSON, semantic consistency, size limits, and redaction. It validates integrity and analytical coherence, not a signature or proof of authorship/authenticity.
 
 ## Read-only MCP
 
