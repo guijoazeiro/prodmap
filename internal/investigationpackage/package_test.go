@@ -200,11 +200,46 @@ func TestCreateRejectsRedactionViolationWithoutWritingPackage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "unsafe.zip")
 	unsafe := validInvestigation(now)
 	unsafe.Limitations = []string{"Bearer secret-value"}
-	if _, err := Create(t.Context(), CreateRequest{OutputPath: path, CreatedAt: now, Investigation: unsafe}); !errors.Is(err, errs.ErrInvalid) {
+	if _, err := Create(t.Context(), CreateRequest{OutputPath: path, CreatedAt: now, Investigation: unsafe}); !errors.Is(err, errs.ErrInvalid) || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("Create error=%v", err)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unsafe package was written: %v", err)
+	}
+}
+
+func TestPackageAcceptsAuthenticationCapabilityNamesAndRejectsCredentials(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	result := validInvestigation(now)
+	result.Deployment.Service = "token-service"
+	result.Regression.Deployment.Service = "token-service"
+	result.Topology.Roots = []string{"service-payment"}
+	result.Topology.Nodes = []topology.Node{
+		{ID: "service-payment", Type: "service", LogicalKey: "payment-api", DisplayName: "payment-api"},
+		{ID: "service-token", Type: "service", LogicalKey: "token-service", DisplayName: "token-service"},
+	}
+	result.Topology.Edges = []topology.Edge{{ID: "edge-token", From: "service-payment", To: "service-token", DependencyKind: "service", EvidenceIDs: []string{"evidence-token"}, Limitations: []string{}}}
+	output, err := OutputFrom(result)
+	if err != nil {
+		t.Fatalf("OutputFrom() error = %v", err)
+	}
+	if output.Deployment.Service != "token-service" || output.Topology.Nodes[1].LogicalKey != "token-service" {
+		t.Fatalf("output=%+v", output)
+	}
+	path := filepath.Join(t.TempDir(), "token-service.zip")
+	created, err := Create(t.Context(), CreateRequest{OutputPath: path, CreatedAt: now, Investigation: result})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	verified, err := Verify(t.Context(), path)
+	if err != nil || verified.InvestigationKey != created.InvestigationKey {
+		t.Fatalf("Verify() result=%+v error=%v", verified, err)
+	}
+
+	unsafe := result
+	unsafe.Limitations = []string{"token=fake-sensitive-value"}
+	if _, err := OutputFrom(unsafe); !errors.Is(err, errs.ErrInvalid) || strings.Contains(err.Error(), "fake-sensitive-value") {
+		t.Fatalf("OutputFrom sensitive error=%v", err)
 	}
 }
 

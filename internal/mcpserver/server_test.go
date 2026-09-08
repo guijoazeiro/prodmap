@@ -144,6 +144,28 @@ func TestServerUnknownAndNoSignalRemainConservative(t *testing.T) {
 	}
 }
 
+func TestServerAllowsAuthenticationCapabilityServiceNames(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	reader := fixtureReader{
+		input: fixtureInput(now),
+		roots: []topology.Node{{ID: "service-payment", Type: "service", LogicalKey: "payment-api", DisplayName: "payment-api"}},
+		nodes: []topology.Node{
+			{ID: "service-payment", Type: "service", LogicalKey: "payment-api", DisplayName: "payment-api"},
+			{ID: "service-token", Type: "service", LogicalKey: "token-service", DisplayName: "token-service"},
+		},
+		edges: []topology.Edge{{ID: "edge-token", From: "service-payment", To: "service-token", DependencyKind: "service", EvidenceIDs: []string{"evidence-token"}, Limitations: []string{}}},
+	}
+	session := connect(t, reader, func() time.Time { return now })
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: ToolName, Arguments: validArguments()})
+	if err != nil || result.IsError {
+		t.Fatalf("tool result=%+v err=%v", result, err)
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil || !strings.Contains(string(encoded), "token-service") || strings.Contains(string(encoded), "fake-sensitive-value") {
+		t.Fatalf("structured output=%s err=%v", encoded, err)
+	}
+}
+
 func TestServerMapsNotFoundAndCancellationWithoutDetails(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	reader := fixtureReader{input: fixtureInput(now), comparisonErr: errs.ErrNotFound}

@@ -19,6 +19,7 @@ import (
 
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	"github.com/guijoazeiro/prodmap/internal/identity"
+	"github.com/guijoazeiro/prodmap/internal/redaction"
 )
 
 const (
@@ -780,14 +781,20 @@ func safeString(name, value string, max int) error {
 			return fmt.Errorf("%w: invalid %s", errs.ErrInvalid, name)
 		}
 	}
-	if forbidden(value) {
+	if err := redaction.ValidatePublicValue(redaction.Identifier, value); err != nil {
+		return fmt.Errorf("%w: prohibited %s", errs.ErrInvalid, name)
+	}
+	// SQL keywords are not credential detection. This ledger-specific guard is
+	// retained because these fields are identity metadata, not free text.
+	if containsLedgerStatement(value) {
 		return fmt.Errorf("%w: prohibited %s", errs.ErrInvalid, name)
 	}
 	return nil
 }
-func forbidden(value string) bool {
+
+func containsLedgerStatement(value string) bool {
 	lowered := strings.ToLower(value)
-	for _, word := range []string{"password", "passwd", "secret", "token", "authorization", "bearer", "cookie", "api_key", "private_key", "postgres://", "postgresql://", "dsn", "select ", "insert ", "update ", "delete "} {
+	for _, word := range []string{"select ", "insert ", "update ", "delete "} {
 		if strings.Contains(lowered, word) {
 			return true
 		}

@@ -21,6 +21,7 @@ import (
 
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	"github.com/guijoazeiro/prodmap/internal/investigation"
+	"github.com/guijoazeiro/prodmap/internal/redaction"
 	"github.com/guijoazeiro/prodmap/internal/regression"
 )
 
@@ -431,7 +432,7 @@ func scanValue(value any, key string) error {
 	switch typed := value.(type) {
 	case map[string]any:
 		for nestedKey, nestedValue := range typed {
-			if prohibitedKey(nestedKey) {
+			if redaction.ProhibitedKey(nestedKey) {
 				return fmt.Errorf("%w: prohibited field in investigation package", errs.ErrInvalid)
 			}
 			if err := scanValue(nestedValue, nestedKey); err != nil {
@@ -445,26 +446,20 @@ func scanValue(value any, key string) error {
 			}
 		}
 	case string:
-		lower := strings.ToLower(typed)
-		if strings.HasPrefix(typed, "/") || containsAbsolutePath(typed) || strings.Contains(lower, "authorization") || strings.Contains(lower, "bearer") || strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "postgres://") || strings.Contains(lower, "mysql://") || strings.Contains(lower, "sqlite:") || strings.Contains(lower, "file:") || strings.Contains(lower, "://") && strings.Contains(lower, "@") {
+		if err := redaction.ValidatePublicValue(publicValueKind(key), typed); err != nil {
 			return fmt.Errorf("%w: prohibited content in investigation package", errs.ErrInvalid)
 		}
 	}
 	return nil
 }
 
-func prohibitedKey(key string) bool {
-	lower := strings.ToLower(key)
-	return lower == "external_id" || lower == "git_head" || lower == "vcs_revision" || lower == "image_reference" || lower == "image_id" || lower == "artifact_identity" || lower == "body" || strings.Contains(lower, "token") || strings.Contains(lower, "authorization") || strings.Contains(lower, "password") || strings.Contains(lower, "dsn") || strings.Contains(lower, "payload") || strings.Contains(lower, "http_body") || strings.Contains(lower, "raw_")
-}
-
-func containsAbsolutePath(value string) bool {
-	for _, field := range strings.Fields(value) {
-		if strings.HasPrefix(field, "/") {
-			return true
-		}
+func publicValueKind(key string) redaction.ValueKind {
+	switch key {
+	case "service", "environment", "logical_key", "display_name", "id", "type", "kind", "metric", "unit", "status", "relation_type":
+		return redaction.Identifier
+	default:
+		return redaction.FreeText
 	}
-	return false
 }
 
 type investigationDocument struct {
