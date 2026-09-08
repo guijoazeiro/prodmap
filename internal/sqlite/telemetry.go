@@ -662,6 +662,14 @@ func decodeEndpointCursor(query telemetry.EndpointQuery) (endpointCursor, error)
 }
 
 func (s *Store) ResolveGraphRoots(ctx context.Context, environment, selector string, all bool) ([]topology.Node, error) {
+	return resolveGraphRoots(ctx, s.db, environment, selector, all)
+}
+
+func (s *ReadSnapshot) ResolveGraphRoots(ctx context.Context, environment, selector string, all bool) ([]topology.Node, error) {
+	return resolveGraphRoots(ctx, s.tx, environment, selector, all)
+}
+
+func resolveGraphRoots(ctx context.Context, db queryer, environment, selector string, all bool) ([]topology.Node, error) {
 	statement := `SELECT id,logical_key,display_name FROM services WHERE environment=?`
 	args := []any{environment}
 	if !all {
@@ -669,7 +677,7 @@ func (s *Store) ResolveGraphRoots(ctx context.Context, environment, selector str
 		args = append(args, selector, selector, selector)
 	}
 	statement += ` ORDER BY logical_key,id`
-	rows, err := s.db.QueryContext(ctx, statement, args...)
+	rows, err := db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve graph roots: %w", errs.ErrUnavailable, err)
 	}
@@ -693,6 +701,14 @@ func (s *Store) ResolveGraphRoots(ctx context.Context, environment, selector str
 }
 
 func (s *Store) ObservedGraph(ctx context.Context, environment string, at time.Time, minimum topology.Confidence, fromServiceIDs []string, limit int) ([]topology.Node, []topology.Edge, bool, error) {
+	return observedGraph(ctx, s.db, environment, at, minimum, fromServiceIDs, limit)
+}
+
+func (s *ReadSnapshot) ObservedGraph(ctx context.Context, environment string, at time.Time, minimum topology.Confidence, fromServiceIDs []string, limit int) ([]topology.Node, []topology.Edge, bool, error) {
+	return observedGraph(ctx, s.tx, environment, at, minimum, fromServiceIDs, limit)
+}
+
+func observedGraph(ctx context.Context, db queryer, environment string, at time.Time, minimum topology.Confidence, fromServiceIDs []string, limit int) ([]topology.Node, []topology.Edge, bool, error) {
 	if limit < 1 || limit > 10000 {
 		return nil, nil, false, fmt.Errorf("%w: graph edge limit must be between 1 and 10000", errs.ErrInvalid)
 	}
@@ -724,7 +740,7 @@ func (s *Store) ObservedGraph(ctx context.Context, environment string, at time.T
 		arguments = append(arguments, id)
 	}
 	arguments = append(arguments, limit+1)
-	rows, err := s.db.QueryContext(ctx, statement, arguments...)
+	rows, err := db.QueryContext(ctx, statement, arguments...)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("%w: query observed graph: %w", errs.ErrUnavailable, err)
 	}
@@ -778,3 +794,5 @@ func (s *Store) ObservedGraph(ctx context.Context, environment string, at time.T
 	sort.Slice(resultNodes, func(i, j int) bool { return resultNodes[i].ID < resultNodes[j].ID })
 	return resultNodes, edges, truncated, nil
 }
+
+var _ topology.Reader = (*ReadSnapshot)(nil)

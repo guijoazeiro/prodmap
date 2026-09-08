@@ -20,6 +20,14 @@ type timelineCursor struct {
 }
 
 func (s *Store) Timeline(ctx context.Context, query timeline.Query) (timeline.Result, error) {
+	return timelineRead(ctx, s.db, query)
+}
+
+func (s *ReadSnapshot) Timeline(ctx context.Context, query timeline.Query) (timeline.Result, error) {
+	return timelineRead(ctx, s.tx, query)
+}
+
+func timelineRead(ctx context.Context, db queryer, query timeline.Query) (timeline.Result, error) {
 	if query.Limit < 1 || query.Limit > 1000 || !query.Until.After(query.Since) {
 		return timeline.Result{}, fmt.Errorf("%w: invalid timeline query", errs.ErrInvalid)
 	}
@@ -50,7 +58,7 @@ SELECT event_id,event_time,priority,status,environment,service,subject_id,subjec
 FROM events WHERE (event_time<? OR (event_time=? AND (priority>? OR (priority=? AND event_id>?))))
 ORDER BY event_time DESC,priority ASC,event_id ASC LIMIT ?`
 	args := []any{environment, formatTime(query.Since), formatTime(query.Until), query.Service, query.Service, environment, formatTime(query.Since), formatTime(query.Until), query.Service, query.Service, cursor.Time, cursor.Time, cursor.Priority, cursor.Priority, cursor.ID, query.Limit + 1}
-	rows, err := s.db.QueryContext(ctx, statement, args...)
+	rows, err := db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return result, fmt.Errorf("%w: query timeline: %w", errs.ErrUnavailable, err)
 	}

@@ -66,7 +66,7 @@ func (a *App) runPackageCreate(ctx context.Context, args []string) error {
 	}
 	defer store.Close()
 	createdAt := a.Now().UTC()
-	result, err := investigation.Compose(ctx, store, investigation.Query{Comparison: query, GeneratedAt: createdAt})
+	result, err := composeInvestigationSnapshot(ctx, store, investigation.Query{Comparison: query, GeneratedAt: createdAt})
 	if err != nil {
 		return fmt.Errorf("compose package investigation: %w", err)
 	}

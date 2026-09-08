@@ -46,7 +46,7 @@ func (a *App) runInvestigate(ctx context.Context, args []string) error {
 	}
 	defer store.Close()
 	generatedAt := a.Now().UTC()
-	result, err := investigation.Compose(ctx, store, investigation.Query{Comparison: comparisonQuery, GeneratedAt: generatedAt})
+	result, err := composeInvestigationSnapshot(ctx, store, investigation.Query{Comparison: comparisonQuery, GeneratedAt: generatedAt})
 	if err != nil {
 		return fmt.Errorf("compose investigation: %w", err)
 	}

@@ -39,5 +39,14 @@ func (a *App) runMCP(ctx context.Context, args []string) error {
 		return err
 	}
 	defer store.Close()
-	return mcpserver.RunStdio(ctx, mcpserver.Config{Reader: store, Now: a.Now})
+	return mcpserver.RunStdio(ctx, mcpserver.Config{
+		OpenReader: func(ctx context.Context) (mcpserver.Reader, func() error, error) {
+			snapshot, err := store.BeginReadSnapshot(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			return snapshot, snapshot.Close, nil
+		},
+		Now: a.Now,
+	})
 }

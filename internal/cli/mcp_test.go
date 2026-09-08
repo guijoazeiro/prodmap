@@ -88,13 +88,22 @@ func TestMCPToolUsesSQLiteFixtureWithoutWrites(t *testing.T) {
 	deploymentID, deployedAt := seedRegressionCLIDataWithMetrics(t, project, regressionCLIMetrics{requests: 20, errors: 1, p50NS: 250_000_000, p95NS: 250_000_000, p99NS: 250_000_000}, regressionCLIMetrics{requests: 30, errors: 1, p50NS: 300_000_000, p95NS: 300_000_000, p99NS: 300_000_000})
 	databasePath := filepath.Join(project, ".prodmap", "prodmap.db")
 	before := mcpDatabaseState(t, databasePath)
-	store, err := prodmapsqlite.Open(t.Context(), databasePath)
+	store, err := prodmapsqlite.OpenReadOnly(t.Context(), databasePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	now := deployedAt.Add(time.Hour)
-	server, err := mcpserver.New(mcpserver.Config{Reader: store, Now: func() time.Time { return now }})
+	server, err := mcpserver.New(mcpserver.Config{
+		OpenReader: func(ctx context.Context) (mcpserver.Reader, func() error, error) {
+			snapshot, err := store.BeginReadSnapshot(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			return snapshot, snapshot.Close, nil
+		},
+		Now: func() time.Time { return now },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
