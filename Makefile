@@ -1,4 +1,4 @@
-.PHONY: build dev run test
+.PHONY: build dev run test test-integration
 
 VERSION ?= dev
 COMMIT ?= unknown
@@ -16,3 +16,7 @@ run:
 
 test:
 	go test ./...
+
+test-integration:
+	PRODMAP_TEST_REAL_DOCKER=1 go test ./internal/docker -run '^TestRealDockerInspection$$' -count=1 -v
+	PRODMAP_TEST_REAL_OTEL=1 go test ./internal/cli -run '^TestRealOTelCollector$$' -count=1 -v

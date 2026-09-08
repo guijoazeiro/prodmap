@@ -43,6 +43,19 @@ Prodmap ingests frozen OTLP traces only. Metrics and logs ingestion, a live rece
 - GNU Make for the documented build and test shortcuts.
 - Docker is optional and only needed for `runtime --refresh`.
 
+## Development tests
+
+```bash
+make test
+make test-integration
+```
+
+Normal tests do not require Docker. `make test-integration` is opt-in and
+requires Docker plus Compose; it creates only isolated test resources, exercises
+the Docker runtime source and the pinned Collector OTLP path, and does not use
+the reference application. CI runs it on pushes to `dev` and `main`, `v*` tags,
+and manual dispatches—not on pull requests.
+
 ## Install from source
 
 There are no release binaries yet. Build the current source checkout:

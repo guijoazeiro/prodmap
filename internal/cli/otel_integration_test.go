@@ -31,7 +31,7 @@ func TestRealOTelCollector(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Fatalf("Docker CLI is required for the requested real Collector smoke: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	if err := exec.CommandContext(ctx, "docker", "info").Run(); err != nil {
 		t.Fatalf("Docker daemon is required for the requested real Collector smoke: %v", err)
@@ -54,7 +54,20 @@ func TestRealOTelCollector(t *testing.T) {
 		defer cleanupCancel()
 		command := exec.CommandContext(cleanupCtx, "docker", "compose", "-p", project, "-f", compose, "down", "--volumes", "--remove-orphans")
 		command.Env = append(os.Environ(), "OTEL_OUTPUT_DIR="+outputDir, fmt.Sprintf("OTEL_UID=%d", os.Getuid()), fmt.Sprintf("OTEL_GID=%d", os.Getgid()))
-		_ = command.Run()
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Errorf("clean up Collector Compose project: %v: %s", err, sanitizeCollectorDiagnostic(output))
+			return
+		}
+		for _, resource := range [][]string{
+			{"ps", "-aq", "--filter", "label=com.docker.compose.project=" + project},
+			{"network", "ls", "-q", "--filter", "label=com.docker.compose.project=" + project},
+			{"volume", "ls", "-q", "--filter", "label=com.docker.compose.project=" + project},
+		} {
+			output, err := exec.CommandContext(cleanupCtx, "docker", resource...).Output()
+			if err != nil || strings.TrimSpace(string(output)) != "" {
+				t.Errorf("Collector Compose project resources remain after cleanup")
+			}
+		}
 	})
 	if output, err := composeCommand("up", "-d", "--wait").CombinedOutput(); err != nil {
 		t.Fatalf("start Collector: %v\nstartup: %s\n%s", err, sanitizeCollectorDiagnostic(output), collectorComposeDiagnostics(project, compose, outputDir))
@@ -110,12 +123,12 @@ func TestRealOTelCollector(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if output, err := composeCommand("stop").CombinedOutput(); err != nil {
-		t.Fatalf("stop Collector: %v: %s", err, output)
+		t.Fatalf("stop Collector: %v: %s", err, sanitizeCollectorDiagnostic(output))
 	}
 	projectDir := t.TempDir()
 	app, stdout, stderr := testApp(projectDir)
 	if code := app.Run(ctx, []string{"telemetry", "ingest", "--file", outputFile, "--window-start", "2026-08-19T12:00:00Z", "--window-end", "2026-08-19T12:01:00Z", "--project-dir", projectDir, "--json"}); code != 0 {
-		t.Fatalf("ingest Collector output exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		t.Fatalf("ingest frozen Collector output failed with exit=%d", code)
 	}
 	database := openCLITestDatabase(t, projectDir)
 	defer database.Close()
@@ -128,7 +141,7 @@ func TestRealOTelCollector(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	if code := app.Run(ctx, []string{"graph", "--service", "checkout", "--at", "2026-08-19T12:00:02.5Z", "--project-dir", projectDir, "--json"}); code != 0 {
-		t.Fatalf("graph Collector output exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		t.Fatalf("query graph from frozen Collector output failed with exit=%d", code)
 	}
 	if !strings.Contains(stdout.String(), `"relation_type":"OBSERVED"`) || !strings.Contains(stdout.String(), `"logical_key":"payment"`) {
 		t.Fatalf("unexpected Collector graph: %s", stdout.String())
@@ -136,7 +149,7 @@ func TestRealOTelCollector(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	if code := app.Run(ctx, []string{"graph", "--service", "checkout", "--at", "2026-08-19T12:01:00Z", "--project-dir", projectDir, "--json"}); code != 0 {
-		t.Fatalf("outside graph exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		t.Fatalf("query boundary graph from frozen Collector output failed with exit=%d", code)
 	}
 	if strings.Contains(stdout.String(), `"relation_type":"OBSERVED"`) {
 		t.Fatalf("outside-window graph retained an edge: %s", stdout.String())
