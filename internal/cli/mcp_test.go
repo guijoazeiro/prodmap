@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/guijoazeiro/prodmap/internal/mcpserver"
 	prodmapsqlite "github.com/guijoazeiro/prodmap/internal/sqlite"
+	_ "modernc.org/sqlite"
 )
 
 func TestMCPHelpAndInvalidFlagsDoNotOpenInventory(t *testing.T) {
@@ -34,14 +36,58 @@ func TestMCPHelpAndInvalidFlagsDoNotOpenInventory(t *testing.T) {
 	}
 }
 
+func TestMCPReadOnlyOpenRejectsAbsentAndOutdatedInventoryWithoutMutation(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		project := t.TempDir()
+		app, _, stderr := testApp(project)
+		if code := app.Run(t.Context(), []string{"mcp", "serve", "--project-dir", project}); code == 0 {
+			t.Fatal("MCP opened an absent inventory")
+		}
+		if _, err := os.Stat(filepath.Join(project, ".prodmap")); !os.IsNotExist(err) {
+			t.Fatalf("absent MCP inventory created project state: %v", err)
+		}
+		if strings.Contains(stderr.String(), project) {
+			t.Fatalf("MCP error exposed path: %q", stderr.String())
+		}
+	})
+
+	t.Run("outdated", func(t *testing.T) {
+		project := t.TempDir()
+		path := filepath.Join(project, ".prodmap", "prodmap.db")
+		store, err := prodmapsqlite.Open(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("DELETE FROM schema_migrations WHERE version = 5"); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		before := mcpDatabaseState(t, path)
+		app, _, _ := testApp(project)
+		if code := app.Run(t.Context(), []string{"mcp", "serve", "--project-dir", project}); code == 0 {
+			t.Fatal("MCP opened an outdated inventory")
+		}
+		if after := mcpDatabaseState(t, path); before != after {
+			t.Fatalf("MCP migrated or changed outdated inventory\nbefore=%+v\nafter=%+v", before, after)
+		}
+	})
+}
+
 func TestMCPToolUsesSQLiteFixtureWithoutWrites(t *testing.T) {
 	project := t.TempDir()
 	deploymentID, deployedAt := seedRegressionCLIDataWithMetrics(t, project, regressionCLIMetrics{requests: 20, errors: 1, p50NS: 250_000_000, p95NS: 250_000_000, p99NS: 250_000_000}, regressionCLIMetrics{requests: 30, errors: 1, p50NS: 300_000_000, p95NS: 300_000_000, p99NS: 300_000_000})
 	databasePath := filepath.Join(project, ".prodmap", "prodmap.db")
-	before, err := os.ReadFile(databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := mcpDatabaseState(t, databasePath)
 	store, err := prodmapsqlite.Open(t.Context(), databasePath)
 	if err != nil {
 		t.Fatal(err)
@@ -118,12 +164,8 @@ func TestMCPToolUsesSQLiteFixtureWithoutWrites(t *testing.T) {
 	if strings.Contains(string(firstJSON), project) || strings.Contains(string(firstJSON), "external_id") || strings.Contains(string(firstJSON), "image_reference") || strings.Contains(string(firstJSON), "git_head") {
 		t.Fatalf("MCP output exposed prohibited data: %s", firstJSON)
 	}
-	after, err := os.ReadFile(databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sha256.Sum256(before) != sha256.Sum256(after) {
-		t.Fatal("MCP tool wrote SQLite")
+	if after := mcpDatabaseState(t, databasePath); before != after {
+		t.Fatalf("MCP tool changed SQLite logical state\nbefore=%+v\nafter=%+v", before, after)
 	}
 }
 
@@ -131,10 +173,7 @@ func TestMCPRealStdio(t *testing.T) {
 	project := t.TempDir()
 	deploymentID, _ := seedRegressionCLIDataWithMetrics(t, project, regressionCLIMetrics{requests: 20, errors: 1, p50NS: 250_000_000, p95NS: 250_000_000, p99NS: 250_000_000}, regressionCLIMetrics{requests: 30, errors: 1, p50NS: 300_000_000, p95NS: 300_000_000, p99NS: 300_000_000})
 	databasePath := filepath.Join(project, ".prodmap", "prodmap.db")
-	before, err := os.ReadFile(databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := mcpDatabaseState(t, databasePath)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
@@ -182,13 +221,62 @@ func TestMCPRealStdio(t *testing.T) {
 	if command.ProcessState == nil || !command.ProcessState.Exited() || !command.ProcessState.Success() {
 		t.Fatalf("helper did not exit cleanly: %v", command.ProcessState)
 	}
-	after, err := os.ReadFile(databasePath)
+	if after := mcpDatabaseState(t, databasePath); before != after {
+		t.Fatalf("stdio MCP server changed SQLite logical state\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+type mcpState struct {
+	MainHash      [sha256.Size]byte
+	SchemaVersion int64
+	UserVersion   int64
+	Migrations    string
+	Deployments   int64
+	Windows       int64
+}
+
+func mcpDatabaseState(t *testing.T, path string) mcpState {
+	t.Helper()
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sha256.Sum256(before) != sha256.Sum256(after) {
-		t.Fatal("stdio MCP server wrote SQLite")
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_query_only=1")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer db.Close()
+	state := mcpState{MainHash: sha256.Sum256(contents)}
+	if err := db.QueryRow("PRAGMA schema_version").Scan(&state.SchemaVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("PRAGMA user_version").Scan(&state.UserVersion); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query("SELECT version || ':' || name || ':' || checksum FROM schema_migrations ORDER BY version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var migrations []string
+	for rows.Next() {
+		var migration string
+		if err := rows.Scan(&migration); err != nil {
+			t.Fatal(err)
+		}
+		migrations = append(migrations, migration)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	state.Migrations = strings.Join(migrations, ",")
+	if err := db.QueryRow("SELECT COUNT(*) FROM deployments").Scan(&state.Deployments); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM telemetry_windows").Scan(&state.Windows); err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
 
 func TestMCPStdioHelperProcess(t *testing.T) {

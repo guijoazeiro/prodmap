@@ -60,7 +60,7 @@ func (a *App) runPackageCreate(ctx context.Context, args []string) error {
 	if flags.NArg() != 0 || strings.TrimSpace(*output) == "" || regression.ValidateQuery(query) != nil {
 		return fmt.Errorf("invalid package create flags: %w", errs.ErrInvalid)
 	}
-	_, store, err := a.openInventory(ctx, common)
+	_, store, err := a.openInventoryReadOnly(ctx, common)
 	if err != nil {
 		return err
 	}

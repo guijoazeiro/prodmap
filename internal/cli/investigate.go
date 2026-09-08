@@ -40,7 +40,7 @@ func (a *App) runInvestigate(ctx context.Context, args []string) error {
 	if flags.NArg() != 0 || regression.ValidateQuery(comparisonQuery) != nil {
 		return fmt.Errorf("invalid investigate flags: %w", errs.ErrInvalid)
 	}
-	_, store, err := a.openInventory(ctx, common)
+	_, store, err := a.openInventoryReadOnly(ctx, common)
 	if err != nil {
 		return err
 	}

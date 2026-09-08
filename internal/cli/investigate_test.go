@@ -29,6 +29,18 @@ func TestInvestigateHelpAndInvalidArgumentsDoNotOpenInventory(t *testing.T) {
 	}
 }
 
+func TestInvestigateReadOnlyOpenDoesNotCreateAbsentInventory(t *testing.T) {
+	project := t.TempDir()
+	app, _, _ := testApp(project)
+	args := []string{"investigate", "--deployment", "018f0000-0000-7000-8000-000000000000", "--metric", "latency_p95", "--project-dir", project}
+	if code := app.Run(t.Context(), args); code == 0 {
+		t.Fatal("investigate opened an absent inventory")
+	}
+	if _, err := os.Stat(filepath.Join(project, ".prodmap")); !os.IsNotExist(err) {
+		t.Fatalf("investigate created absent inventory: %v", err)
+	}
+}
+
 func TestInvestigationTimelineEventUsesAllowlistedDeploymentAndConcurrencyDTOs(t *testing.T) {
 	generatedAt := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	output := investigationTimelineEventFrom(timeline.Event{

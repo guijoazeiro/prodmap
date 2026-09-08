@@ -29,6 +29,14 @@ func addInventoryFlags(flags *flag.FlagSet) inventoryFlags {
 }
 
 func (a *App) openInventory(ctx context.Context, common inventoryFlags) (config.Config, *prodmapsqlite.Store, error) {
+	return a.openInventoryWith(ctx, common, prodmapsqlite.Open)
+}
+
+func (a *App) openInventoryReadOnly(ctx context.Context, common inventoryFlags) (config.Config, *prodmapsqlite.Store, error) {
+	return a.openInventoryWith(ctx, common, prodmapsqlite.OpenReadOnly)
+}
+
+func (a *App) openInventoryWith(ctx context.Context, common inventoryFlags, open func(context.Context, string) (*prodmapsqlite.Store, error)) (config.Config, *prodmapsqlite.Store, error) {
 	if *common.projectDir == "" {
 		cwd, err := a.currentWorkingDir()
 		if err != nil {
@@ -40,7 +48,7 @@ func (a *App) openInventory(ctx context.Context, common inventoryFlags) (config.
 	if err != nil {
 		return config.Config{}, nil, fmt.Errorf("load configuration: %w", err)
 	}
-	store, err := prodmapsqlite.Open(ctx, cfg.DataDir)
+	store, err := open(ctx, cfg.DataDir)
 	if err != nil {
 		return config.Config{}, nil, fmt.Errorf("open sqlite: %w", err)
 	}

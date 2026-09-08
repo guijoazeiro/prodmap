@@ -81,6 +81,49 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	return store, nil
 }
 
+// OpenReadOnly opens an existing, fully compatible database without changing
+// its schema, permissions, journal mode, or logical contents.
+func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(path) == "" || path == ":memory:" {
+		return nil, fmt.Errorf("%w: database path must name an existing file", errs.ErrInvalid)
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: database does not exist", errs.ErrNotFound)
+	}
+	if err != nil {
+		return nil, classifyOpenError("inspect database path", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: database path must name a regular file", errs.ErrInvalid)
+	}
+
+	dsn, err := sqliteReadOnlyDSN(path)
+	if err != nil {
+		return nil, classifyOpenError("construct read-only database connection", err)
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, classifyOpenError("open read-only database", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	closeOnError := func(err error) (*Store, error) {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		return closeOnError(classifyOpenError("connect to read-only database", err))
+	}
+	if err := validateReadOnlySchema(ctx, db, embeddedMigrations); err != nil {
+		return closeOnError(err)
+	}
+	return &Store{db: db, now: time.Now}, nil
+}
+
 func (s *Store) clockNow() time.Time {
 	if s != nil && s.now != nil {
 		return s.now().UTC()
@@ -99,6 +142,22 @@ func configure(ctx context.Context, db *sql.DB) error {
 }
 
 func sqliteDSN(path string) (string, error) {
+	return sqliteURI(path, func(query url.Values) {
+		query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMilliseconds))
+		query.Set("_foreign_keys", "1")
+		query.Set("_txlock", "immediate")
+	})
+}
+
+func sqliteReadOnlyDSN(path string) (string, error) {
+	return sqliteURI(path, func(query url.Values) {
+		query.Set("mode", "ro")
+		query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMilliseconds))
+		query.Set("_query_only", "1")
+	})
+}
+
+func sqliteURI(path string, configure func(url.Values)) (string, error) {
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
@@ -108,9 +167,7 @@ func sqliteDSN(path string) (string, error) {
 		uriPath = "/" + uriPath
 	}
 	query := url.Values{}
-	query.Set("_busy_timeout", strconv.Itoa(busyTimeoutMilliseconds))
-	query.Set("_foreign_keys", "1")
-	query.Set("_txlock", "immediate")
+	configure(query)
 	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
 }
 

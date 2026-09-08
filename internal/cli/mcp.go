@@ -34,7 +34,7 @@ func (a *App) runMCP(ctx context.Context, args []string) error {
 	if err != nil || flags.NArg() != 0 || *common.jsonOutput {
 		return fmt.Errorf("invalid mcp serve flags: %w", errs.ErrInvalid)
 	}
-	_, store, err := a.openInventory(ctx, common)
+	_, store, err := a.openInventoryReadOnly(ctx, common)
 	if err != nil {
 		return err
 	}

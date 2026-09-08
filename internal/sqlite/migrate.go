@@ -178,3 +178,60 @@ func validateApplied(ctx context.Context, conn *sql.Conn, available []migration)
 	}
 	return nil
 }
+
+// validateReadOnlySchema verifies exact compatibility without issuing schema or
+// data mutations. Read-only consumers must never upgrade a database.
+func validateReadOnlySchema(ctx context.Context, db *sql.DB, source fs.FS) error {
+	migrations, err := loadMigrations(source)
+	if err != nil {
+		return err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: acquire schema validation connection", errs.ErrUnavailable)
+	}
+	defer conn.Close()
+
+	exists, err := schemaMigrationsExists(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("%w: schema migrations are missing", errs.ErrIncompatible)
+	}
+	return validateAppliedExact(ctx, conn, migrations)
+}
+
+func validateAppliedExact(ctx context.Context, conn *sql.Conn, expected []migration) error {
+	available := make(map[int64]migration, len(expected))
+	for _, item := range expected {
+		available[item.version] = item
+	}
+	seen := make(map[int64]bool, len(expected))
+	rows, err := conn.QueryContext(ctx, "SELECT version, name, checksum FROM schema_migrations ORDER BY version")
+	if err != nil {
+		return fmt.Errorf("%w: read applied migrations", errs.ErrUnavailable)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var version int64
+		var name, checksum string
+		if err := rows.Scan(&version, &name, &checksum); err != nil {
+			return fmt.Errorf("%w: scan applied migration", errs.ErrUnavailable)
+		}
+		item, ok := available[version]
+		if !ok || item.name != name || item.checksum != checksum {
+			return fmt.Errorf("%w: database schema migration differs from this binary", errs.ErrIncompatible)
+		}
+		seen[version] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("%w: iterate applied migrations", errs.ErrUnavailable)
+	}
+	for _, item := range expected {
+		if !seen[item.version] {
+			return fmt.Errorf("%w: database schema is incomplete", errs.ErrIncompatible)
+		}
+	}
+	return nil
+}
