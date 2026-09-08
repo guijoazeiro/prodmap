@@ -33,3 +33,11 @@ formal `go`, `pivot`, or `stop` decision.
 - Phase 6: IMPLEMENTED as a minimal local stdio MCP with exactly one read-only
   `investigate_deployment` tool; it has no raw sources, persistence, or
   migration.
+
+## Subsequent bounded authorization
+
+[Decision 005](005-bounded-mcp-deployment-discovery.md) authorizes a future
+v0.3 Slice 6.1 to add only the read-only `list_deployments` tool while
+preserving `investigate_deployment`. It is pending implementation; it does not
+authorize writes, remote sources, network access, or a commercial validation or
+formal `go`, `pivot`, or `stop` decision.

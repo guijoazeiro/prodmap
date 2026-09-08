@@ -156,6 +156,12 @@ Example generic MCP client configuration:
 
 The server exposes exactly one tool: `investigate_deployment`. It requires a deployment UUIDv7 and a metric (`request_count`, `error_rate`, `latency_p50`, `latency_p95`, or `latency_p99`) and accepts optional before/after durations, minimum samples, and minimum coverage. It uses stdio, opens no HTTP port, accepts no arbitrary paths through the tool, is read-only, and never returns raw sources. MCP requires an already initialized, schema-compatible inventory: it opens SQLite with `mode=ro`, never creates a database or runs migrations, and a compatible inventory must be updated by an authorized write command outside MCP. Its confidence carries limitations and always declares `causality_claimed: false`.
 
+[Decision 005](docs/decisions/005-bounded-mcp-deployment-discovery.md) authorizes
+a future, limited v0.3 Slice 6.1 to add only `list_deployments` so an agent can
+select an internal deployment UUID before investigating it. It is not
+implemented: the current binary still exposes only `investigate_deployment` and
+does not gain writes, network access, remote sources, or other MCP tools.
+
 ## Commands
 
 | Command | Purpose |
@@ -226,4 +232,4 @@ go test -race ./...
 
 ## Short history
 
-Foundation through Phase 4 established local provenance, observed topology, deployment context, conservative regression, and a limited technical validation. Decision 004 authorizes the bounded technical evolution of Phases 5 and 6: investigation view, reproducible package, and minimal read-only MCP. This remains an engineering side project; product accuracy, calibration, and the original product thesis are still inconclusive.
+Foundation through Phase 4 established local provenance, observed topology, deployment context, conservative regression, and a limited technical validation. Decision 004 authorizes the bounded technical evolution of Phases 5 and 6: investigation view, reproducible package, and minimal read-only MCP. Decision 005 authorizes a future, still-unimplemented v0.3 `list_deployments` discovery tool only. This remains an engineering side project; product accuracy, calibration, and the original product thesis are still inconclusive.

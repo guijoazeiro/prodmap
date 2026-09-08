@@ -362,6 +362,11 @@ O verificador do pacote também rejeita incoerência semântica e JSON com chave
 duplicadas, permanecendo offline e sem alegar autenticidade.
 O MCP expõe exatamente `investigate_deployment`; isso não constitui validação
 comercial nem decisão formal `go`, `pivot` ou `stop`.
+[Decision 005](decisions/005-bounded-mcp-deployment-discovery.md) autoriza uma
+evolução técnica futura e limitada para v0.3: a Slice 6.1 poderá acrescentar
+somente `list_deployments`, preservando a tool atual. Ela ainda não está
+implementada; o binário continua expondo exclusivamente
+`investigate_deployment`, sem escrita, rede ou novas fontes.
 
 ---
 
