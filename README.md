@@ -56,6 +56,32 @@ the Docker runtime source and the pinned Collector OTLP path, and does not use
 the reference application. CI runs it on pushes to `dev` and `main`, `v*` tags,
 and manual dispatches—not on pull requests.
 
+### Opt-in model-driven MCP validation
+
+Run the local E2E MCP agent check only when intentionally validating the
+model/tool interaction:
+
+```bash
+make test-mcp-agent
+```
+
+It uses the locally authenticated Codex CLI and therefore can consume Codex
+usage. The runner creates an isolated SQLite fixture, has GPT-5.6 Terra
+discover a `payment-api` deployment through `list_deployments`, then call
+`investigate_deployment`, and validates a structured `CANDIDATE` result without
+causality. It is opt-in and is not run by CI. To sample bounded variation:
+
+```bash
+MCP_AGENT_RUNS=3 \
+MCP_AGENT_MODEL=gpt-5.6-terra \
+MCP_AGENT_REASONING_EFFORT=medium \
+make test-mcp-agent
+```
+
+The model's wording can vary; this check validates tool-use structure and
+semantics rather than commercial accuracy. Deterministic Go and shell tests
+remain the primary regression protection.
+
 ## Install from source
 
 There are no release binaries yet. Build the current source checkout:
