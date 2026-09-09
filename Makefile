@@ -1,4 +1,4 @@
-.PHONY: build dev run test test-integration test-mcp-agent
+.PHONY: build dev run test test-integration test-mcp-agent test-scripts
 
 VERSION ?= dev
 COMMIT ?= unknown
@@ -16,6 +16,10 @@ run:
 
 test:
 	go test ./...
+
+test-scripts:
+	bash -n scripts/test-mcp-agent.sh scripts/test/mcp_agent_test.sh
+	./scripts/test/mcp_agent_test.sh
 
 test-integration:
 	PRODMAP_TEST_REAL_DOCKER=1 go test ./internal/docker -run '^TestRealDockerInspection$$' -count=1 -v

@@ -33,6 +33,9 @@ jobs:
       - name: Test with race detector
         run: go test -race ./...
 
+      - name: Test scripts
+        run: make test-scripts
+
       - name: Build
         run: make build
 
