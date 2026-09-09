@@ -30,14 +30,15 @@ formal `go`, `pivot`, or `stop` decision.
 - Slice 5.1: IMPLEMENTED as a bounded, read-only side project.
 - Slice 5.2: IMPLEMENTED as a reproducible, sanitized, offline-verifiable
   package without persistence or raw sources.
-- Phase 6: IMPLEMENTED as a minimal local stdio MCP with exactly one read-only
-  `investigate_deployment` tool; it has no raw sources, persistence, or
-  migration.
+- Phase 6 originally implemented a minimal local stdio MCP with exactly one
+  read-only `investigate_deployment` tool; it has no raw sources, persistence,
+  or migration.
 
-## Subsequent bounded authorization
+## Subsequent bounded authorization and implementation
 
-[Decision 005](005-bounded-mcp-deployment-discovery.md) authorizes a future
-v0.3 Slice 6.1 to add only the read-only `list_deployments` tool while
-preserving `investigate_deployment`. It is pending implementation; it does not
+[Decision 005](005-bounded-mcp-deployment-discovery.md) subsequently authorized
+and Slice 6.1 implemented the read-only `list_deployments` tool while
+preserving `investigate_deployment`. The current server exposes exactly two
+read-only tools: `list_deployments` and `investigate_deployment`. It does not
 authorize writes, remote sources, network access, or a commercial validation or
 formal `go`, `pivot`, or `stop` decision.
