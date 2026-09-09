@@ -2,7 +2,7 @@
 
 ## Status
 
-Authorized for a future implementation; Slice 6.1 is not implemented.
+Implemented by Slice 6.1.
 
 ## Owner authorization
 
@@ -18,21 +18,21 @@ evolution of the side project, not commercial validation or a formal `go`,
 
 [ADR-029](../adr/029-stdio-read-only-mcp.md) records the original v0.2 MCP
 milestone accurately: the binary exposed exactly one tool,
-`investigate_deployment`. This decision authorizes a later evolution only. Until
-Slice 6.1 is implemented, the binary continues to expose only
-`investigate_deployment`.
+`investigate_deployment`. This decision authorized a later evolution. Slice 6.1
+now adds only `list_deployments`, preserving `investigate_deployment`; the
+resulting binary exposes exactly those two tools.
 
-## Authorized future Slice 6.1
+## Implemented Slice 6.1 scope
 
-Slice 6.1 may add exactly one read-only MCP tool: `list_deployments`. It may
-use only the local SQLite inventory to return a sanitized projection of recent
+Slice 6.1 adds exactly one read-only MCP tool: `list_deployments`. It uses only
+the local SQLite inventory to return a sanitized projection of recent
 deployments, so an agent can follow this bounded flow:
 
 ```text
 list_deployments → select internal UUIDv7 → investigate_deployment
 ```
 
-The future tool may accept optional `environment`, `service`, `status`,
+The tool accepts optional `environment`, `service`, `status`,
 `since` (RFC3339), `until` (RFC3339), bounded `limit`, and opaque `cursor`
 filters. It may use deterministic ordering, keyset pagination, one read-only
 SQLite snapshot per call, field-aware redaction, versioned JSON, and applicable
@@ -93,6 +93,6 @@ their own decision.
 
 ## Consequence
 
-Only `list_deployments` is authorized for the future Slice 6.1. Implementation
-requires its own ADR and tests, and must not expand this decision into writes,
-external sources, or more tools.
+Only `list_deployments` was authorized and implemented for Slice 6.1; its final
+contract is recorded in [ADR-033](../adr/033-mcp-deployment-discovery.md). The
+decision does not expand into writes, external sources, or more tools.

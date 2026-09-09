@@ -32,6 +32,8 @@ const (
 	RuntimeAlgorithmVersion                 = "deployment-runtime/v1"
 	MaxRuntimeCandidatesPerDeployment       = 100
 	MaxRuntimeCandidatesPerPage             = 10000
+	DiscoveryDefaultLimit                   = 20
+	DiscoveryMaxLimit                       = 100
 )
 
 const MaxRuntimeConfirmationDelay = 30 * time.Minute
@@ -323,6 +325,39 @@ type QueryResult struct {
 	Environment string
 	Items       []Deployment
 	NextCursor  string
+}
+
+// DiscoveryQuery describes the bounded, lightweight read model used by MCP.
+// Cursor fields are internal keyset values decoded by the MCP boundary.
+type DiscoveryQuery struct {
+	Environment, Service, Status string
+	Since, Until                 time.Time
+	Limit                        int
+	CursorStartedAt              time.Time
+	CursorID                     string
+}
+
+// DiscoveryItem deliberately excludes ledger, artifact, and runtime details.
+type DiscoveryItem struct {
+	ID, Environment, Service, Status, Strategy string
+	StartedAt                                  time.Time
+	Provenance                                 DiscoveryProvenance
+}
+
+type DiscoveryProvenance struct {
+	Status, Confidence, Basis string
+	Limitations               []string
+}
+
+type DiscoveryResult struct {
+	Items      []DiscoveryItem
+	HasMore    bool
+	LastCursor DiscoveryItem
+}
+
+// ValidStatus reports whether value belongs to the closed deployment-status contract.
+func ValidStatus(value string) bool {
+	return slices.Contains([]string{"pending", "running", "succeeded", "failed", "cancelled", "rolled_back", "unknown"}, value)
 }
 
 type Store interface {
@@ -661,7 +696,7 @@ func validateRaw(raw rawRecord) error {
 	if strings.Contains(raw.ImageReference, "@") || strings.Contains(raw.ImageReference, "?") || strings.Contains(raw.ImageReference, "#") || strings.Contains(raw.ImageReference, "://") {
 		return fmt.Errorf("%w: invalid image_reference", errs.ErrInvalid)
 	}
-	if !slices.Contains([]string{"pending", "running", "succeeded", "failed", "cancelled", "rolled_back", "unknown"}, raw.Status) {
+	if !ValidStatus(raw.Status) {
 		return fmt.Errorf("%w: invalid status", errs.ErrInvalid)
 	}
 	started, err := parseUTC(raw.BuildStartedAt)

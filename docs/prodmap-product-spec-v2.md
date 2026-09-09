@@ -888,10 +888,10 @@ Entregas:
 local com exatamente a tool `investigate_deployment`. Ele não expõe fontes
 brutas, não persiste resultados e não constitui validação comercial nem decisão
 formal `go`, `pivot` ou `stop`.
-[Decision 005](decisions/005-bounded-mcp-deployment-discovery.md) autoriza
-somente uma futura Slice 6.1 de v0.3 para acrescentar
-`list_deployments`; a tool ainda não existe no binário e não autoriza escrita,
-rede, fontes remotas ou outras tools.
+[Decision 005](decisions/005-bounded-mcp-deployment-discovery.md) implementa a
+Slice 6.1 limitada de v0.3, acrescentando somente `list_deployments` para que
+o agente escolha um UUID interno antes de investigar. O escopo não autoriza
+escrita, rede, fontes remotas ou outras tools.
 
 Entregas:
 
