@@ -268,6 +268,7 @@ go test -race ./...
 - [Product specification](docs/prodmap-product-spec-v2.md)
 - [Technical specification](docs/prodmap-technical-spec-v1.md)
 - [Architecture decisions](docs/adr/)
+- [v0.3.1 final review](docs/reviews/v0.3-final-review.md)
 - [Deployment ledger contract](docs/contracts/deployment-ledger-jsonl-v1.md)
 - [OTLP trace examples](docs/phase-2a-json-examples.md)
 - [Reference application](https://github.com/guijoazeiro/prodmap-reference-app)
