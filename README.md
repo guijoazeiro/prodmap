@@ -154,7 +154,25 @@ Example generic MCP client configuration:
 }
 ```
 
-The server exposes exactly one tool: `investigate_deployment`. It requires a deployment UUIDv7 and a metric (`request_count`, `error_rate`, `latency_p50`, `latency_p95`, or `latency_p99`) and accepts optional before/after durations, minimum samples, and minimum coverage. It uses stdio, opens no HTTP port, accepts no arbitrary paths through the tool, is read-only, and never returns raw sources. MCP requires an already initialized, schema-compatible inventory: it opens SQLite with `mode=ro`, never creates a database or runs migrations, and a compatible inventory must be updated by an authorized write command outside MCP. Its confidence carries limitations and always declares `causality_claimed: false`.
+The server exposes exactly two tools: `list_deployments` and
+`investigate_deployment`. Use discovery to obtain an internal deployment UUID,
+then pass it to the investigation tool. `list_deployments` accepts bounded
+environment, service, status, time-window, limit, and opaque-cursor filters;
+it defaults to the prior 24 hours and returns only a sanitized deployment
+projection. Both tools use stdio, open no HTTP port, accept no arbitrary paths,
+are read-only, and never return raw sources. MCP requires an already
+initialized, schema-compatible inventory: it opens SQLite with `mode=ro`, never
+creates a database or runs migrations, and a compatible inventory must be
+updated by an authorized write command outside MCP. Its confidence carries
+limitations and always declares `causality_claimed: false`.
+
+[Decision 005](docs/decisions/005-bounded-mcp-deployment-discovery.md) and
+[ADR-033](docs/adr/033-mcp-deployment-discovery.md) record the limited v0.3
+addition of `list_deployments`. The server gains no writes, network access,
+remote sources, or other MCP tools.
+
+The agent flow is `list_deployments` with safe filters, select an item’s
+`deployment_id`, then call `investigate_deployment` with that UUID and metric.
 
 ## Commands
 
@@ -178,7 +196,7 @@ The server exposes exactly one tool: `investigate_deployment`. It requires a dep
 | `investigate` | Compose regression, topology, timeline, and evidence references. |
 | `package create` | Write a sanitized, verifiable investigation ZIP. |
 | `package verify` | Verify an investigation ZIP offline. |
-| `mcp serve` | Serve `investigate_deployment` over stdio. |
+| `mcp serve` | Serve `list_deployments` and `investigate_deployment` over stdio. |
 
 Use `./bin/prodmap <command> --help` for the full flag contract.
 
@@ -226,4 +244,4 @@ go test -race ./...
 
 ## Short history
 
-Foundation through Phase 4 established local provenance, observed topology, deployment context, conservative regression, and a limited technical validation. Decision 004 authorizes the bounded technical evolution of Phases 5 and 6: investigation view, reproducible package, and minimal read-only MCP. This remains an engineering side project; product accuracy, calibration, and the original product thesis are still inconclusive.
+Foundation through Phase 4 established local provenance, observed topology, deployment context, conservative regression, and a limited technical validation. Decision 004 authorizes the bounded technical evolution of Phases 5 and 6: investigation view, reproducible package, and minimal read-only MCP. Decision 005 authorizes a future, still-unimplemented v0.3 `list_deployments` discovery tool only. This remains an engineering side project; product accuracy, calibration, and the original product thesis are still inconclusive.

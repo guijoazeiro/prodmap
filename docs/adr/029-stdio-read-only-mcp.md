@@ -32,3 +32,14 @@ operacional retornado é dado não confiável: consumidores não devem executá-
 nem inferir causalidade. Riscos residuais incluem acesso do usuário aos dados
 locais selecionados ao iniciar o servidor e interpretação indevida de resultados
 `UNKNOWN`, `NO_SIGNAL` ou `CANDIDATE`.
+
+## Historical scope and later authorization
+
+This ADR records the original v0.2 implementation, which correctly exposed
+exactly one tool, `investigate_deployment`. [Decision 005](../decisions/005-bounded-mcp-deployment-discovery.md)
+later authorizes a narrowly bounded v0.3 Slice 6.1 to add only
+`list_deployments`. That evolution is now implemented and specified by
+[ADR-033](033-mcp-deployment-discovery.md); it preserves
+`investigate_deployment` and every read-only, redaction, stdio, and no-network
+constraint recorded here. This ADR remains the historical v0.2 record of the
+original single-tool server.

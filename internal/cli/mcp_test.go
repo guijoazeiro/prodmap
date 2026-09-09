@@ -180,7 +180,7 @@ func TestMCPToolUsesSQLiteFixtureWithoutWrites(t *testing.T) {
 
 func TestMCPRealStdio(t *testing.T) {
 	project := t.TempDir()
-	deploymentID, _ := seedRegressionCLIDataWithMetrics(t, project, regressionCLIMetrics{requests: 20, errors: 1, p50NS: 250_000_000, p95NS: 250_000_000, p99NS: 250_000_000}, regressionCLIMetrics{requests: 30, errors: 1, p50NS: 300_000_000, p95NS: 300_000_000, p99NS: 300_000_000})
+	_, deployedAt := seedRegressionCLIDataWithMetrics(t, project, regressionCLIMetrics{requests: 20, errors: 1, p50NS: 250_000_000, p95NS: 250_000_000, p99NS: 250_000_000}, regressionCLIMetrics{requests: 30, errors: 1, p50NS: 300_000_000, p95NS: 300_000_000, p99NS: 300_000_000})
 	databasePath := filepath.Join(project, ".prodmap", "prodmap.db")
 	before := mcpDatabaseState(t, databasePath)
 
@@ -200,10 +200,27 @@ func TestMCPRealStdio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 1 || tools.Tools[0].Name != mcpserver.ToolName {
+	if len(tools.Tools) != 2 || tools.Tools[0].Name != mcpserver.InvestigateDeploymentToolName || tools.Tools[1].Name != mcpserver.ListDeploymentsToolName {
 		t.Fatalf("tools=%+v", tools.Tools)
 	}
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: mcpserver.ToolName, Arguments: map[string]any{"deployment": deploymentID, "metric": "latency_p95"}})
+	listed, err := session.CallTool(ctx, &mcp.CallToolParams{Name: mcpserver.ListDeploymentsToolName, Arguments: map[string]any{"since": deployedAt.Add(-time.Minute).Format(time.RFC3339Nano), "until": deployedAt.Add(time.Minute).Format(time.RFC3339Nano), "limit": 1}})
+	if err != nil || listed.IsError || listed.StructuredContent == nil {
+		t.Fatalf("list=%+v err=%v", listed, err)
+	}
+	listedJSON, err := json.Marshal(listed.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listOutput map[string]any
+	if err := json.Unmarshal(listedJSON, &listOutput); err != nil {
+		t.Fatal(err)
+	}
+	items := listOutput["items"].([]any)
+	if len(items) != 1 || listOutput["schema_version"] != mcpserver.DiscoveryVersion {
+		t.Fatalf("list output=%#v", listOutput)
+	}
+	deploymentID := items[0].(map[string]any)["deployment_id"].(string)
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: mcpserver.InvestigateDeploymentToolName, Arguments: map[string]any{"deployment": deploymentID, "metric": "latency_p95"}})
 	if err != nil || result.IsError || result.StructuredContent == nil {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}

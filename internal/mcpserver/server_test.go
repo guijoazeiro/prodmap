@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/guijoazeiro/prodmap/internal/baseline"
+	"github.com/guijoazeiro/prodmap/internal/deployment"
 	"github.com/guijoazeiro/prodmap/internal/errs"
 	"github.com/guijoazeiro/prodmap/internal/regression"
 	"github.com/guijoazeiro/prodmap/internal/timeline"
@@ -34,7 +35,7 @@ func TestServerHandshakeSchemaAndSuccessfulToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 1 || tools.Tools[0].Name != ToolName || !strings.Contains(tools.Tools[0].Description, "bounded, read-only") {
+	if len(tools.Tools) != 2 || tools.Tools[0].Name != InvestigateDeploymentToolName || tools.Tools[1].Name != ListDeploymentsToolName || !strings.Contains(tools.Tools[0].Description, "bounded, read-only") {
 		t.Fatalf("tools=%+v", tools.Tools)
 	}
 	inputSchema, ok := tools.Tools[0].InputSchema.(map[string]any)
@@ -262,12 +263,16 @@ func TestServerRejectsOversizeOutputAndConcurrentCalls(t *testing.T) {
 	if err == nil || err.Error() != "INCOMPATIBLE_SCHEMA" {
 		t.Fatalf("oversize err=%v", err)
 	}
-	session := connect(t, fixtureReader{input: fixtureInput(now)}, func() time.Time { return now })
+	session := connect(t, fixtureReader{input: fixtureInput(now), discovery: deployment.DiscoveryResult{Items: []deployment.DiscoveryItem{{ID: validDeploymentID, Environment: "reference", Service: "payment-api", Status: "running", Strategy: "unknown", StartedAt: now.Add(-time.Minute), Provenance: deployment.DiscoveryProvenance{Status: "UNKNOWN", Confidence: "UNKNOWN", Basis: "fixture", Limitations: []string{}}}}}}, func() time.Time { return now })
 	var group sync.WaitGroup
 	errs := make(chan error, 16)
-	for range 16 {
+	for index := range 16 {
 		group.Go(func() {
-			result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: ToolName, Arguments: validArguments()})
+			name, arguments := InvestigateDeploymentToolName, validArguments()
+			if index%2 == 1 {
+				name, arguments = ListDeploymentsToolName, map[string]any{"limit": 1}
+			}
+			result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: arguments})
 			if err != nil {
 				errs <- err
 				return
@@ -345,6 +350,7 @@ type fixtureReader struct {
 	input         regression.Input
 	comparisonErr error
 	wait          bool
+	discovery     deployment.DiscoveryResult
 	roots, nodes  []topology.Node
 	edges         []topology.Edge
 	timeline      timeline.Result
@@ -358,6 +364,70 @@ func (r fixtureReader) Comparison(ctx context.Context, query regression.Query) (
 	input := r.input
 	input.Query = query
 	return input, r.comparisonErr
+}
+
+func (r fixtureReader) DiscoverDeployments(_ context.Context, _ deployment.DiscoveryQuery) (deployment.DiscoveryResult, error) {
+	if r.discovery.Items == nil {
+		return deployment.DiscoveryResult{Items: []deployment.DiscoveryItem{}}, nil
+	}
+	return r.discovery, nil
+}
+
+func TestListDeploymentsUsesClosedSchemaAndAllowlistedOutput(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	started := now.Add(-time.Hour)
+	reader := fixtureReader{input: fixtureInput(now), discovery: deployment.DiscoveryResult{Items: []deployment.DiscoveryItem{{ID: validDeploymentID, Environment: "reference", Service: "token-service", Status: "succeeded", Strategy: "rolling", StartedAt: started, Provenance: deployment.DiscoveryProvenance{Status: "MATCHED", Confidence: "HIGH", Basis: "immutable deployment record", Limitations: []string{}}}}}}
+	session := connect(t, reader, func() time.Time { return now })
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: ListDeploymentsToolName, Arguments: map[string]any{"limit": 1}})
+	if err != nil || result.IsError {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(encoded, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output["schema_version"] != DiscoveryVersion || output["generated_at"] != now.Format(time.RFC3339Nano) || len(output["items"].([]any)) != 1 || output["next_cursor"] != nil {
+		t.Fatalf("output=%#v", output)
+	}
+	if strings.Contains(string(encoded), "external_id") || !strings.Contains(string(encoded), "token-service") {
+		t.Fatalf("output=%s", encoded)
+	}
+}
+
+func TestListDeploymentsRejectsInputBeforeSnapshot(t *testing.T) {
+	opened := 0
+	server, err := New(Config{Now: time.Now, OpenReader: func(context.Context) (Reader, func() error, error) {
+		opened++
+		return fixtureReader{}, func() error { return nil }, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "v1"}, nil)
+	session, err := client.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	for _, arguments := range []map[string]any{{"environment": ""}, {"limit": 101}, {"status": "invalid"}, {"cursor": ""}, {"path": "/tmp"}} {
+		result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: ListDeploymentsToolName, Arguments: arguments})
+		if err != nil || !result.IsError {
+			t.Fatalf("arguments=%v result=%+v err=%v", arguments, result, err)
+		}
+	}
+	if opened != 0 {
+		t.Fatalf("invalid list input opened %d snapshots", opened)
+	}
 }
 func (r fixtureReader) ResolveGraphRoots(_ context.Context, _, _ string, _ bool) ([]topology.Node, error) {
 	return r.roots, nil

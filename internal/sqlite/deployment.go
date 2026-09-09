@@ -475,6 +475,73 @@ func (s *Store) Deployments(ctx context.Context, query deployment.Query) (deploy
 	return result, nil
 }
 
+// DiscoverDeployments reads the deliberately narrow deployment projection used
+// by MCP. It performs one bounded query and never loads evidence or runtimes.
+func (s *ReadSnapshot) DiscoverDeployments(ctx context.Context, query deployment.DiscoveryQuery) (deployment.DiscoveryResult, error) {
+	if s == nil || s.tx == nil {
+		return deployment.DiscoveryResult{}, fmt.Errorf("%w: deployment discovery requires a read snapshot", errs.ErrInvalid)
+	}
+	return discoverDeployments(ctx, s.tx, query)
+}
+
+func discoverDeployments(ctx context.Context, db queryer, query deployment.DiscoveryQuery) (deployment.DiscoveryResult, error) {
+	if query.Limit < 1 || query.Limit > deployment.DiscoveryMaxLimit || query.Since.IsZero() || query.Until.IsZero() || !query.Until.After(query.Since) {
+		return deployment.DiscoveryResult{}, fmt.Errorf("%w: invalid deployment discovery query", errs.ErrInvalid)
+	}
+	if query.Environment != "" {
+		environment, err := identity.ValidEnvironment(query.Environment)
+		if err != nil || environment != query.Environment {
+			return deployment.DiscoveryResult{}, fmt.Errorf("%w: invalid deployment discovery environment", errs.ErrInvalid)
+		}
+	}
+	if query.Status != "" && !deployment.ValidStatus(query.Status) {
+		return deployment.DiscoveryResult{}, fmt.Errorf("%w: invalid deployment discovery status", errs.ErrInvalid)
+	}
+	startedAt, cursorID := "9999-12-31T23:59:59.999999999Z", "~"
+	if !query.CursorStartedAt.IsZero() || query.CursorID != "" {
+		if query.CursorStartedAt.IsZero() || query.CursorID == "" {
+			return deployment.DiscoveryResult{}, fmt.Errorf("%w: invalid deployment discovery cursor", errs.ErrInvalid)
+		}
+		startedAt, cursorID = formatTime(query.CursorStartedAt), query.CursorID
+	}
+	result := deployment.DiscoveryResult{Items: []deployment.DiscoveryItem{}}
+	rows, err := db.QueryContext(ctx, `SELECT d.id,d.environment,d.service_key,d.status,d.strategy,d.started_at,d.provenance_status,d.confidence_level,d.confidence_basis,d.limitations_json FROM deployments d WHERE (?='' OR d.environment=?) AND (?='' OR d.service_key=?) AND (?='' OR d.status=?) AND d.started_at>=? AND d.started_at<? AND (d.started_at<? OR (d.started_at=? AND d.id<?)) ORDER BY d.started_at DESC,d.id DESC LIMIT ?`, query.Environment, query.Environment, query.Service, query.Service, query.Status, query.Status, formatTime(query.Since), formatTime(query.Until), startedAt, startedAt, cursorID, query.Limit+1)
+	if err != nil {
+		return result, fmt.Errorf("%w: query deployment discovery", errs.ErrUnavailable)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item deployment.DiscoveryItem
+		var started, limitations string
+		if err := rows.Scan(&item.ID, &item.Environment, &item.Service, &item.Status, &item.Strategy, &started, &item.Provenance.Status, &item.Provenance.Confidence, &item.Provenance.Basis, &limitations); err != nil {
+			return result, fmt.Errorf("%w: scan deployment discovery", errs.ErrIncompatible)
+		}
+		parsed, err := parseTime(started)
+		if err != nil {
+			return result, err
+		}
+		item.StartedAt = parsed
+		if err := json.Unmarshal([]byte(limitations), &item.Provenance.Limitations); err != nil {
+			return result, fmt.Errorf("%w: decode deployment discovery limitations", errs.ErrIncompatible)
+		}
+		if item.Provenance.Limitations == nil {
+			item.Provenance.Limitations = []string{}
+		}
+		result.Items = append(result.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return result, fmt.Errorf("%w: iterate deployment discovery", errs.ErrUnavailable)
+	}
+	if len(result.Items) > query.Limit {
+		result.Items = result.Items[:query.Limit]
+		result.HasMore = true
+	}
+	if len(result.Items) > 0 {
+		result.LastCursor = result.Items[len(result.Items)-1]
+	}
+	return result, nil
+}
+
 func (s *Store) attachRuntimeAssociations(ctx context.Context, result *deployment.QueryResult) error {
 	if len(result.Items) == 0 {
 		return nil

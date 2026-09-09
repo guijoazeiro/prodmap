@@ -56,6 +56,42 @@ func TestDeploymentLedgerReplayAndQuery(t *testing.T) {
 	}
 }
 
+func TestDeploymentDiscoveryUsesReadSnapshotAndKeysetBoundary(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "prodmap.db")
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	snapshot, err := deployment.LoadFrozenFile(ctx, filepath.Join("..", "..", "testdata", "deployment", "valid-two-services.jsonl"), time.Date(2026, 8, 26, 12, 1, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveDeployment(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	readOnly, err := OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readOnly.Close()
+	read, err := readOnly.BeginReadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	result, err := read.DiscoverDeployments(ctx, deployment.DiscoveryQuery{Since: time.Date(2026, 8, 26, 11, 0, 0, 0, time.UTC), Until: time.Date(2026, 8, 26, 13, 0, 0, 0, time.UTC), Limit: 1})
+	if err != nil || len(result.Items) != 1 || !result.HasMore || result.Items[0].ID == "" || result.Items[0].Provenance.Limitations == nil {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	first := result.LastCursor
+	result, err = read.DiscoverDeployments(ctx, deployment.DiscoveryQuery{Since: time.Date(2026, 8, 26, 11, 0, 0, 0, time.UTC), Until: time.Date(2026, 8, 26, 13, 0, 0, 0, time.UTC), Limit: 1, CursorStartedAt: first.StartedAt, CursorID: first.ID})
+	if err != nil || len(result.Items) != 1 || result.HasMore || result.Items[0].ID == first.ID {
+		t.Fatalf("second=%+v err=%v", result, err)
+	}
+}
+
 func TestGitHubActionsDeploymentSourceIsAtomicAndIdempotent(t *testing.T) {
 	ctx := t.Context()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "prodmap.db"))
