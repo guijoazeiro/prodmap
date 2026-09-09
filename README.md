@@ -33,7 +33,9 @@ flowchart TD
 - Calculate conservative baseline and deployment-centered regression views.
 - Classify eligible regressions as `CANDIDATE`, `NO_SIGNAL`, or `UNKNOWN`.
 - Compose a sanitized, agent-ready investigation view.
-- Create and verify portable investigation packages, or expose investigations through one read-only MCP tool.
+- Create and verify portable investigation packages, or expose read-only MCP
+  tools for deployment discovery and investigation: `list_deployments` and
+  `investigate_deployment`.
 
 Prodmap ingests frozen OTLP traces only. Metrics and logs ingestion, a live receiver, causal scoring, and generic export are out of scope.
 
@@ -69,7 +71,10 @@ It uses the locally authenticated Codex CLI and therefore can consume Codex
 usage. The runner creates an isolated SQLite fixture, has GPT-5.6 Terra
 discover a `payment-api` deployment through `list_deployments`, then call
 `investigate_deployment`, and validates a structured `CANDIDATE` result without
-causality. It is opt-in and is not run by CI. To sample bounded variation:
+causality. This real eval is probabilistic, opt-in, and not a release gate or
+CI job. A model can end after `list_deployments`; that trajectory failure does
+not imply an MCP server failure. `make test-scripts` runs the deterministic
+shell validation in CI. To sample bounded variation:
 
 ```bash
 MCP_AGENT_RUNS=3 \
@@ -194,8 +199,8 @@ limitations and always declares `causality_claimed: false`.
 
 [Decision 005](docs/decisions/005-bounded-mcp-deployment-discovery.md) and
 [ADR-033](docs/adr/033-mcp-deployment-discovery.md) record the limited v0.3
-addition of `list_deployments`. The server gains no writes, network access,
-remote sources, or other MCP tools.
+addition of `list_deployments`, released as `v0.3.0-mcp-discovery`. The server
+gains no writes, network access, remote sources, or other MCP tools.
 
 The agent flow is `list_deployments` with safe filters, select an item’s
 `deployment_id`, then call `investigate_deployment` with that UUID and metric.
@@ -270,4 +275,12 @@ go test -race ./...
 
 ## Short history
 
-Foundation through Phase 4 established local provenance, observed topology, deployment context, conservative regression, and a limited technical validation. Decision 004 authorizes the bounded technical evolution of Phases 5 and 6: investigation view, reproducible package, and minimal read-only MCP. Decision 005 authorizes a future, still-unimplemented v0.3 `list_deployments` discovery tool only. This remains an engineering side project; product accuracy, calibration, and the original product thesis are still inconclusive.
+Foundation through Phase 4 established local provenance, observed topology,
+deployment context, conservative regression, and a limited technical
+validation. Decision 004 authorizes the bounded technical evolution of Phases
+5 and 6: investigation view, reproducible package, and minimal read-only MCP.
+Decision 005 subsequently authorized and Slice 6.1 implemented v0.3 bounded
+`list_deployments` discovery alongside `investigate_deployment`, released as
+`v0.3.0-mcp-discovery`. This remains an engineering side project; product
+accuracy, calibration, and the original commercial thesis are still
+inconclusive.
