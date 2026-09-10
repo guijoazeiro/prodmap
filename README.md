@@ -1,14 +1,71 @@
 # Prodmap
 
-Prodmap is a local-first Go CLI that correlates source revisions, container images, runtime instances, deployments, and OpenTelemetry traces to give developers and coding agents structured production context.
+Prodmap is a local-first Go CLI that combines Git, Docker runtime, deployment,
+and frozen OpenTelemetry trace evidence to help explain what was running and
+what changed around a deployment.
 
-It helps answer practical questions: which version is running, which commit produced an artifact, how services communicate, what changed around a deployment, whether behavior changed, and which evidence supports that view. Correlation is evidence, not causation.
+It is an experimental side project. Correlation is not causation; insufficient
+or incompatible evidence returns `UNKNOWN`; and `CANDIDATE` is not a confirmed
+regression. Prodmap does not make health, causal, commercial, or product-thesis
+claims.
 
-## Status
+## Why Prodmap?
 
-Prodmap is an experimental side project. It is a functional local CLI backed by local SQLite, with a read-only stdio MCP server. It is not commercially validated. Analytical results can be `UNKNOWN`, `NO_SIGNAL`, or `CANDIDATE`; `CANDIDATE` is not confirmed and `NO_SIGNAL` does not mean healthy.
+Production investigations often require joining evidence recorded separately:
+a Git revision, a container runtime, a deployment ledger, and a trace captured
+in a bounded interval. Prodmap keeps those inputs local, records their evidence
+boundaries, and returns a conservative view rather than an unsupported
+explanation.
 
-The project deliberately prefers explicit uncertainty over a persuasive but unsupported conclusion.
+For example: **Checkout became slower after a deployment. What changed?**
+Prodmap can select the deployment, compare bounded telemetry windows around it,
+attach nearby topology and timeline evidence, and state the limitations of that
+comparison.
+
+## What the answer looks like
+
+An investigation is structured evidence, not a verdict:
+
+```text
+Deployment: payment-api deployment UUID
+Regression: CANDIDATE
+Direction: INCREASE
+Confidence: LOW
+Causality claimed: false
+```
+
+`UNKNOWN` remains distinct from `LOW`; `NO_SIGNAL` does not mean healthy; and
+`CANDIDATE` means conservative thresholds were met, not that a regression was
+confirmed or caused by the deployment.
+
+## Quickstart
+
+Build the current source checkout, then initialize and diagnose a local project:
+
+```bash
+git clone git@github.com:guijoazeiro/prodmap.git
+cd prodmap
+make build
+./bin/prodmap version
+./bin/prodmap init
+./bin/prodmap doctor
+```
+
+Ingest a frozen deployment ledger and trace JSONL, list deployments, and use
+the returned internal deployment UUID for the temporal commands:
+
+```bash
+./bin/prodmap deployments ingest --file deployments.jsonl --json
+./bin/prodmap telemetry ingest --file traces.otlp.jsonl \
+  --environment reference --window-start <RFC3339> --window-end <RFC3339> --json
+./bin/prodmap deploys --environment reference --json
+./bin/prodmap regression --deployment <UUIDv7> --metric latency_p95 --json
+./bin/prodmap investigate --deployment <UUIDv7> --metric latency_p95 --json
+```
+
+The UUID returned by `deploys` identifies the specific ledgered deployment for
+regression and investigation. Docker is optional: it is needed only to collect
+local runtime evidence with `runtime --refresh`.
 
 ## How it works
 
@@ -23,106 +80,44 @@ flowchart TD
     E --> H[Read-only MCP]
 ```
 
-## What it can do
+## Core workflows
 
-- Initialize and diagnose a local project.
-- Read local Docker runtime inventory without mutating containers.
-- Correlate immutable runtime provenance with local Git evidence.
-- Ingest frozen OTLP trace JSONL and build observed service topology.
-- Ingest deployment ledgers, list deployments, and build a timeline.
-- Calculate conservative baseline and deployment-centered regression views.
-- Classify eligible regressions as `CANDIDATE`, `NO_SIGNAL`, or `UNKNOWN`.
-- Compose a sanitized, agent-ready investigation view.
-- Create and verify portable investigation packages, or expose read-only MCP
-  tools for deployment discovery and investigation: `list_deployments` and
-  `investigate_deployment`.
+- **Runtime provenance:** read local Docker runtime inventory without mutating
+  containers, then correlate immutable runtime provenance with local Git
+  evidence.
+- **Frozen telemetry ingestion:** ingest OTLP trace JSONL, build observed
+  service topology, endpoint windows, and a bounded timeline.
+- **Deployment intelligence:** ingest a frozen deployment ledger or fetch and
+  persist a verified GitHub Actions ledger artifact, then list deployments and
+  their derived runtime context.
+- **Baseline and regression:** calculate conservative prior and post-deployment
+  windows and classify eligible comparisons as `CANDIDATE`, `NO_SIGNAL`, or
+  `UNKNOWN`.
+- **Investigation packages:** create a portable sanitized investigation ZIP and
+  verify it offline.
+- **MCP:** expose bounded deployment discovery and investigation through the
+  read-only stdio tools `list_deployments` and `investigate_deployment`.
 
-Prodmap ingests frozen OTLP traces only. Metrics and logs ingestion, a live receiver, causal scoring, and generic export are out of scope.
+Prodmap ingests frozen OTLP traces only. Metrics and logs ingestion, a live
+receiver, causal scoring, and generic export are out of scope.
 
-## Requirements
+## Installation and requirements
 
 - Go 1.26.6 or newer in the Go 1.26 line.
 - GNU Make for the documented build and test shortcuts.
 - Docker is optional and only needed for `runtime --refresh`.
 
-## Development tests
+There are no release binaries yet. Build the current source checkout with
+`make build`; use `./bin/prodmap <command> --help` for the full flag contract.
 
-```bash
-make test
-make test-integration
-```
+## Additional local evidence queries
 
-Normal tests do not require Docker. `make test-integration` is opt-in and
-requires Docker plus Compose; it creates only isolated test resources, exercises
-the Docker runtime source and the pinned Collector OTLP path, and does not use
-the reference application. CI runs it on pushes to `dev` and `main`, `v*` tags,
-and manual dispatches—not on pull requests.
-
-### Opt-in model-driven MCP validation
-
-Run the local E2E MCP agent check only when intentionally validating the
-model/tool interaction:
-
-```bash
-make test-mcp-agent
-```
-
-It uses the locally authenticated Codex CLI and therefore can consume Codex
-usage. The runner creates an isolated SQLite fixture, has GPT-5.6 Terra
-discover a `payment-api` deployment through `list_deployments`, then call
-`investigate_deployment`, and validates a structured `CANDIDATE` result without
-causality. This real eval is probabilistic, opt-in, and not a release gate or
-CI job. A model can end after `list_deployments`; that trajectory failure does
-not imply an MCP server failure. `make test-scripts` runs the deterministic
-shell validation in CI. To sample bounded variation:
-
-```bash
-MCP_AGENT_RUNS=3 \
-MCP_AGENT_MODEL=gpt-5.6-terra \
-MCP_AGENT_REASONING_EFFORT=medium \
-make test-mcp-agent
-```
-
-The model's wording can vary; this check validates tool-use structure and
-semantics rather than commercial accuracy. Deterministic Go and shell tests
-remain the primary regression protection.
-
-## Install from source
-
-There are no release binaries yet. Build the current source checkout:
-
-```bash
-git clone git@github.com:guijoazeiro/prodmap.git
-cd prodmap
-make build
-./bin/prodmap version
-```
-
-## Quickstart
-
-Start with an empty local project:
-
-```bash
-./bin/prodmap init
-./bin/prodmap doctor
-```
-
-Refresh local runtime evidence when Docker is available, then inspect known services:
+Refresh local runtime evidence when Docker is available, then inspect known
+services:
 
 ```bash
 ./bin/prodmap runtime --refresh --environment reference
 ./bin/prodmap services --json
-```
-
-Ingest a frozen trace file for a bounded time window. The input is one OTLP `ExportTraceServiceRequest` JSON object per JSONL line:
-
-```bash
-./bin/prodmap telemetry ingest \
-  --file traces.otlp.jsonl \
-  --environment reference \
-  --window-start <RFC3339> \
-  --window-end <RFC3339> \
-  --json
 ```
 
 Query observed topology at a reproducible instant:
@@ -135,21 +130,8 @@ Query observed topology at a reproducible instant:
   --json
 ```
 
-Ingest a deployment ledger and find the deployment UUID used by the temporal commands:
-
-```bash
-./bin/prodmap deployments ingest --file deployments.jsonl --json
-./bin/prodmap deploys --environment reference --json
-```
-
-Compare behavior around a deployment, then compose the agent-facing view. Replace `<UUIDv7>` with the deployment ID returned by `deploys`:
-
-```bash
-./bin/prodmap regression --deployment <UUIDv7> --metric latency_p95 --json
-./bin/prodmap investigate --deployment <UUIDv7> --metric latency_p95 --json
-```
-
-All examples use local files and SQLite. Docker is not required after runtime evidence has been captured.
+All examples use local files and SQLite. Docker is not required after runtime
+evidence has been captured.
 
 ## Reproducible investigation packages
 
@@ -163,7 +145,46 @@ Create a portable package from the same read-only investigation composition, the
 
 The ZIP contains exactly `manifest.json`, `investigation.json`, and `SHA256SUMS`. Verification checks the closed file inventory, hashes, duplicate-free strict JSON, semantic consistency, size limits, and redaction. It validates integrity and analytical coherence, not a signature or proof of authorship/authenticity.
 
-## Read-only MCP
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `init` | Create local configuration and SQLite state. |
+| `doctor` | Check local configuration and optional dependencies. |
+| `status` | Summarize local inventory state. |
+| `runtime` | Query or refresh local Docker runtime evidence. |
+| `services` | List observed services and runtime associations. |
+| `explain` | Explain stored provenance or correlation evidence. |
+| `telemetry ingest` | Ingest frozen OTLP trace JSONL. |
+| `graph` | Read observed service topology. |
+| `endpoints` | Read endpoint-level telemetry windows. |
+| `deployments ingest` | Ingest a frozen deployment ledger. |
+| `deployments sync github-actions` | Fetch and persist a verified GitHub Actions ledger artifact. |
+| `deploys` | List deployments and derived runtime context. |
+| `timeline` | Read deployment and runtime events in time order. |
+| `baseline` | Evaluate one prior telemetry window. |
+| `regression` | Compare before/after windows around a deployment. |
+| `investigate` | Compose regression, topology, timeline, and evidence references. |
+| `package create` | Write a sanitized, verifiable investigation ZIP. |
+| `package verify` | Verify an investigation ZIP offline. |
+| `mcp serve` | Serve `list_deployments` and `investigate_deployment` over stdio. |
+
+Use `./bin/prodmap <command> --help` for the full flag contract.
+
+## Configuration and inputs
+
+`init` creates project configuration at `.prodmap/config.yaml` and SQLite data at `.prodmap/prodmap.db`. `--data-dir` is the path to the SQLite file despite its historic flag name, not a directory.
+
+Configuration precedence is: command flags, environment variables, project configuration, user configuration, then defaults. Supported variables are:
+
+- `PRODMAP_PROJECT_DIR`
+- `PRODMAP_DATA_DIR`
+- `PRODMAP_LOG_LEVEL`
+- `PRODMAP_LOG_FORMAT`
+
+Input contracts and examples are documented in the [deployment ledger contract](docs/contracts/deployment-ledger-jsonl-v1.md), [OTLP ingestion ADR](docs/adr/016-otel-ingestion-format.md), and [Phase 2A JSON examples](docs/phase-2a-json-examples.md).
+
+## MCP configuration and agent workflow
 
 Run the MCP server over stdio:
 
@@ -205,45 +226,6 @@ gains no writes, network access, remote sources, or other MCP tools.
 The agent flow is `list_deployments` with safe filters, select an item’s
 `deployment_id`, then call `investigate_deployment` with that UUID and metric.
 
-## Commands
-
-| Command | Purpose |
-| --- | --- |
-| `init` | Create local configuration and SQLite state. |
-| `doctor` | Check local configuration and optional dependencies. |
-| `status` | Summarize local inventory state. |
-| `runtime` | Query or refresh local Docker runtime evidence. |
-| `services` | List observed services and runtime associations. |
-| `explain` | Explain stored provenance or correlation evidence. |
-| `telemetry ingest` | Ingest frozen OTLP trace JSONL. |
-| `graph` | Read observed service topology. |
-| `endpoints` | Read endpoint-level telemetry windows. |
-| `deployments ingest` | Ingest a frozen deployment ledger. |
-| `deployments sync github-actions` | Fetch and persist a verified GitHub Actions ledger artifact. |
-| `deploys` | List deployments and derived runtime context. |
-| `timeline` | Read deployment and runtime events in time order. |
-| `baseline` | Evaluate one prior telemetry window. |
-| `regression` | Compare before/after windows around a deployment. |
-| `investigate` | Compose regression, topology, timeline, and evidence references. |
-| `package create` | Write a sanitized, verifiable investigation ZIP. |
-| `package verify` | Verify an investigation ZIP offline. |
-| `mcp serve` | Serve `list_deployments` and `investigate_deployment` over stdio. |
-
-Use `./bin/prodmap <command> --help` for the full flag contract.
-
-## Configuration and inputs
-
-`init` creates project configuration at `.prodmap/config.yaml` and SQLite data at `.prodmap/prodmap.db`. `--data-dir` is the path to the SQLite file despite its historic flag name, not a directory.
-
-Configuration precedence is: command flags, environment variables, project configuration, user configuration, then defaults. Supported variables are:
-
-- `PRODMAP_PROJECT_DIR`
-- `PRODMAP_DATA_DIR`
-- `PRODMAP_LOG_LEVEL`
-- `PRODMAP_LOG_FORMAT`
-
-Input contracts and examples are documented in the [deployment ledger contract](docs/contracts/deployment-ledger-jsonl-v1.md), [OTLP ingestion ADR](docs/adr/016-otel-ingestion-format.md), and [Phase 2A JSON examples](docs/phase-2a-json-examples.md).
-
 ## Semantics and safety
 
 - `UNKNOWN` is not `LOW`; it represents insufficient or incompatible evidence.
@@ -252,7 +234,7 @@ Input contracts and examples are documented in the [deployment ledger contract](
 - `CANDIDATE` is not confirmed; `NO_SIGNAL` is not a health claim.
 - Investigation, package, and MCP outputs never expose raw Docker inspection, secrets, HTTP bodies, raw telemetry, ledger source records, image references, or Git SHAs.
 
-## Development
+## Development and testing
 
 ```bash
 make dev
@@ -262,6 +244,42 @@ go test -race ./...
 ```
 
 `make dev` uses the Air version pinned in `go.mod` for local hot reload. It is a development convenience, not a production runtime component.
+
+Normal tests do not require Docker. `make test-integration` is opt-in and
+requires Docker plus Compose; it creates only isolated test resources, exercises
+the Docker runtime source and the pinned Collector OTLP path, and does not use
+the reference application. CI runs it on pushes to `dev` and `main`, `v*` tags,
+and manual dispatches—not on pull requests.
+
+### Opt-in model-driven MCP validation
+
+Run the local E2E MCP agent check only when intentionally validating the
+model/tool interaction:
+
+```bash
+make test-mcp-agent
+```
+
+It uses the locally authenticated Codex CLI and therefore can consume Codex
+usage. The runner creates an isolated SQLite fixture, has GPT-5.6 Terra
+discover a `payment-api` deployment through `list_deployments`, then calls
+`investigate_deployment`, and validates a structured `CANDIDATE` result without
+causality. This real eval is probabilistic, opt-in, and not a release gate or
+CI job. A model can end after `list_deployments`; Terra Medium and High have
+done so in recorded attempts. That trajectory failure does not imply an MCP
+server failure and is not success for the full agent flow. `make test-scripts`
+runs the deterministic shell validation in CI. To sample bounded variation:
+
+```bash
+MCP_AGENT_RUNS=3 \
+MCP_AGENT_MODEL=gpt-5.6-terra \
+MCP_AGENT_REASONING_EFFORT=medium \
+make test-mcp-agent
+```
+
+The model's wording can vary; this check validates tool-use structure and
+semantics rather than commercial accuracy. Deterministic Go and shell tests
+remain the primary regression protection.
 
 ## Documentation
 
