@@ -1,5 +1,7 @@
 # Prodmap
 
+English | [Português (Brasil)](README.pt-BR.md)
+
 Prodmap is a local-first Go CLI that combines Git, Docker runtime, deployment,
 and frozen OpenTelemetry trace evidence to help explain what was running and
 what changed around a deployment.
